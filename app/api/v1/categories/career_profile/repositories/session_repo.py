@@ -26,6 +26,11 @@ class SessionRepository:
         return db.query(CareerProfileTestSession).filter(
             CareerProfileTestSession.id == session_id
         ).first()
+    
+    def get_by_token(self, db: Session, token: str):
+        return db.query(CareerProfileTestSession).filter(
+            CareerProfileTestSession.session_token == token
+        ).first()
 
     def mark_riasec_completed(self, db: Session, session_id: int):
         """Mark RIASEC as completed"""

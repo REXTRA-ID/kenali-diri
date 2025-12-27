@@ -12,7 +12,7 @@ from datetime import datetime
 router = APIRouter(prefix="/career-profile", tags=["Career Profile"])
     
 @router.post("/start", response_model=SessionResponse)
-@limiter.limit("10/hour")
+# @limiter.limit("10/hour")
 async def start_test(
     request: Request,
     data: SessionCreateRequest,
