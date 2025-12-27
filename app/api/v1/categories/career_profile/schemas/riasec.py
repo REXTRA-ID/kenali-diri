@@ -16,12 +16,12 @@ class RIASECAnswerItem(BaseModel):
 class RIASECSubmitRequest(BaseModel):
     """Request schema for submitting RIASEC test"""
     session_token: str = Field(..., description="Session token")
-    responses: List[RIASECAnswerItem] = Field(..., min_items=12, max_items=12)
+    responses: List[RIASECAnswerItem] = Field(..., min_items=72, max_items=72)
     
     @validator('responses')
     def validate_responses_count(cls, v):
-        if len(v) != 12:
-            raise ValueError('Must provide exactly 12 responses')
+        if len(v) != 72:
+            raise ValueError('Must provide exactly 72 responses (12 per RIASEC type)')
         
         # Check for duplicate question IDs
         question_ids = [r.question_id for r in v]
@@ -32,7 +32,7 @@ class RIASECSubmitRequest(BaseModel):
 
 # Response
 class QuestionSetResponse(BaseModel):
-    question_ids: List[int]  # 12 IDs
+    question_ids: List[int]  # 72 IDs
     questions: List[dict]     # Full question data
 
 class RIASECScoreDetail(BaseModel):

@@ -43,7 +43,7 @@ async def submit_riasec_test(
     and generates profession candidates using 4-tier expansion algorithm.
     
     Args:
-        request: Contains session_token and 12 responses
+        request: Contains session_token and 72 responses (12 per RIASEC type)
         db: Database session
         
     Returns:
@@ -54,7 +54,7 @@ async def submit_riasec_test(
         responses = [
             RIASECAnswerItem(
                 question_id=r.question_id,
-                answer=r.answer_value
+                answer_value=r.answer_value
             )
             for r in request.responses
         ]

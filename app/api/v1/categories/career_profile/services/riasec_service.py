@@ -69,13 +69,13 @@ class RIASECService:
     
     def generate_question_set(self, session_token: str) -> List[int]:
         """
-        Generate 12 random questions (2 per RIASEC type)
+        Generate all 72 questions (12 per RIASEC type)
         
         Args:
-            session_token: Session token for random seed
+            session_token: Session token for random seed (used for shuffling order)
             
         Returns:
-            List of 12 question IDs
+            List of 72 question IDs (all questions, shuffled)
         """
         # Seed random with session token
         random.seed(session_token)
@@ -90,17 +90,16 @@ class RIASECService:
             'C': list(range(61, 73))
         }
         
-        selected_questions = []
+        all_questions = []
         
-        # Select 2 questions per type
+        # Include all questions from each type
         for riasec_type, question_pool in question_ranges.items():
-            selected = random.sample(question_pool, 2)
-            selected_questions.extend(selected)
+            all_questions.extend(question_pool)
         
         # Shuffle the final order
-        random.shuffle(selected_questions)
+        random.shuffle(all_questions)
         
-        return selected_questions
+        return all_questions
     
     def calculate_scores(self, responses: List[RIASECAnswerItem]) -> Dict[str, int]:
         """
@@ -145,11 +144,15 @@ class RIASECService:
         Returns:
             Tuple of (riasec_code, classification_type, is_inconsistent)
         """
-        # Sort scores descending
+        # Define RIASEC order for tie-breaker (R-I-A-S-E-C)
+        riasec_order = {"R": 0, "I": 1, "A": 2, "S": 3, "E": 4, "C": 5}
+        
+        # Sort scores descending by score, then ascending by RIASEC order (tie-breaker)
+        # Key: (-score, riasec_index) - negative score for descending, positive index for ascending
         sorted_scores = sorted(
             scores.items(), 
-            key=lambda x: x[1], 
-            reverse=True
+            key=lambda x: (-x[1], riasec_order.get(x[0], 999)), 
+            reverse=False
         )
         
         rank1_type, rank1_score = sorted_scores[0]
@@ -215,7 +218,7 @@ class RIASECService:
         
         Args:
             session_token: The session token
-            responses: List of user responses (12 items)
+            responses: List of user responses (72 items: 12 per RIASEC type)
             
         Returns:
             Dict with complete result data
@@ -231,10 +234,10 @@ class RIASECService:
                 )
             
             # 2. Validate responses
-            if len(responses) != 12:
+            if len(responses) != 72:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Expected 12 responses, got {len(responses)}"
+                    detail=f"Expected 72 responses (12 per RIASEC type), got {len(responses)}"
                 )
             
             # Get question set and validate question IDs
@@ -250,10 +253,10 @@ class RIASECService:
             
             # Validate answer values (1-5)
             for response in responses:
-                if not (1 <= response.answer <= 5):
+                if not (1 <= response.answer_value <= 5):
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Answer must be between 1-5, got {response.answer}"
+                        detail=f"Answer must be between 1-5, got {response.answer_value}"
                     )
             
             # 3. Calculate scores
@@ -271,7 +274,7 @@ class RIASECService:
                 "answers": [
                     {
                         "question_id": r.question_id,
-                        "answer": r.answer
+                        "answer": r.answer_value
                     }
                     for r in responses
                 ]
