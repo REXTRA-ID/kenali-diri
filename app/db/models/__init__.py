@@ -1,5 +1,6 @@
 from .kenalidiri_category import KenaliDiriCategory
 from .kenalidiri_history import KenaliDiriHistory
+from .user import User
 
 # from .riasec_code import RIASECCode
 # from .careerprofile_session import CareerProfileTestSession

@@ -59,10 +59,10 @@ class RIASECQuestionSet(Base):
     question_ids = Column(JSONB, nullable=False)
     generated_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    session = relationship(
-        "CareerProfileTestSession",
-        back_populates="question_set"
-    )
+    # session = relationship(
+    #     "CareerProfileTestSession",
+    #     back_populates="question_set"
+    # )
 
 class RIASECResult(Base):
     __tablename__ = "riasec_results"
@@ -97,10 +97,10 @@ class RIASECResult(Base):
 
     calculated_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    session = relationship(
-        "CareerProfileTestSession",
-        back_populates="result"
-    )
+    # session = relationship(
+    #     "CareerProfileTestSession",
+    #     back_populates="result"
+    # )
 
     riasec_code = relationship(
         "RIASECCode",
@@ -140,7 +140,7 @@ class RIASECResponse(Base):
     responses_data = Column(JSONB, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    session = relationship(
-        "CareerProfileTestSession",
-        back_populates="response"
-    )
+    # session = relationship(
+    #     "CareerProfileTestSession",
+    #     back_populates="response"
+    # )

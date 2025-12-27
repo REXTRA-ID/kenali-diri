@@ -28,8 +28,8 @@ class IkigaiCandidateProfession(Base):
         server_default=func.now()
     )
 
-    # 🔗 Relationship
-    session = relationship(
-        "CareerProfileTestSession",
-        back_populates="ikigai_candidates"
-    )
+    # # 🔗 Relationship
+    # session = relationship(
+    #     "CareerProfileTestSession",
+    #     back_populates="ikigai_candidates"
+    # )

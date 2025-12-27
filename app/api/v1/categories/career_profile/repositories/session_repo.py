@@ -5,20 +5,22 @@ from app.api.v1.categories.career_profile.models.session import CareerProfileTes
 from datetime import datetime
 
 class SessionRepository:
-    def create(self, db: Session, user_id: int):
+    def create(self, db: Session, user_id: uuid.UUID):
         """Create new test session, return (session, token)"""
         session_token = str(uuid.uuid4())
 
         new_session = CareerProfileTestSession(
             user_id=user_id,
-            status="riasec_pending"
+            status="riasec_pending",
+            session_token=session_token,
+            started_at=datetime.now()
         )
         db.add(new_session)
         db.commit()
         db.refresh(new_session)
 
         # In real implementation, might store token separately or use session_id as token
-        return new_session, session_token
+        return new_session
 
     def get_by_id(self, db: Session, session_id: int):
         return db.query(CareerProfileTestSession).filter(
