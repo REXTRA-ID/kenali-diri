@@ -260,7 +260,63 @@ class IkigaiService:
         # Execute all tasks in parallel
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
+        # =====================================================================
+        # FAIL-FAST: Check for critical failure rates
+        # =====================================================================
+        total_count = len(results)
+        failed_count = sum(1 for r in results if isinstance(r, Exception))
+        success_count = total_count - failed_count
+        
+        # Calculate failure rate
+        failure_rate = failed_count / total_count if total_count > 0 else 0
+        
+        logger.info(
+            "parallel_evaluation_stats",
+            total_tasks=total_count,
+            successful=success_count,
+            failed=failed_count,
+            failure_rate=f"{failure_rate * 100:.1f}%"
+        )
+        
+        # CRITICAL: If ALL evaluations failed, don't return misleading 0% scores
+        if total_count > 0 and failed_count == total_count:
+            # Get first error for context
+            first_error = next((r for r in results if isinstance(r, Exception)), None)
+            error_message = str(first_error) if first_error else "Unknown error"
+            
+            logger.critical(
+                "all_ai_evaluations_failed",
+                total_failed=failed_count,
+                first_error=error_message,
+                hint="Check AI API credentials, rate limits, or service availability"
+            )
+            
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "AI evaluation service is currently unavailable. "
+                    "All evaluation requests failed. Please try again later. "
+                    f"Error: {error_message[:200]}"
+                )
+            )
+        
+        # WARNING: If most (>80%) evaluations failed, log critical warning
+        # but allow graceful degradation with partial results
+        HIGH_FAILURE_THRESHOLD = 0.8
+        if failure_rate > HIGH_FAILURE_THRESHOLD:
+            first_error = next((r for r in results if isinstance(r, Exception)), None)
+            logger.error(
+                "high_ai_evaluation_failure_rate",
+                failure_rate=f"{failure_rate * 100:.1f}%",
+                failed=failed_count,
+                succeeded=success_count,
+                first_error=str(first_error) if first_error else "Unknown",
+                hint="Partial results returned. Consider investigating AI service issues."
+            )
+        
+        # =====================================================================
         # Process results and group by profession
+        # =====================================================================
         profession_results: Dict[int, Dict] = {}
         
         for i, result in enumerate(results):
@@ -276,7 +332,7 @@ class IkigaiService:
                     'dimension_scores': {}
                 }
             
-            # Handle exceptions gracefully
+            # Handle exceptions gracefully (for partial failures)
             if isinstance(result, Exception):
                 logger.warning(
                     "dimension_evaluation_failed",
@@ -287,7 +343,7 @@ class IkigaiService:
                 # Use zero scores for failed evaluations
                 result = {
                     "scores": {"K": 0.0, "S": 0.0, "B": 0.0, "final_dimension_score": 0.0},
-                    "analysis": {"topic_relevance": "Evaluation failed"}
+                    "analysis": {"topic_relevance": "Evaluation failed - AI service error"}
                 }
             
             # Store dimension result
