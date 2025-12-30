@@ -12,7 +12,7 @@ from datetime import datetime
 router = APIRouter(prefix="/career-profile", tags=["Career Profile"])
     
 @router.post("/start", response_model=SessionResponse)
-@limiter.limit("10/hour")
+@limiter.limit("100/hour")
 async def start_test(
     request: Request,
     data: SessionCreateRequest,
@@ -22,8 +22,8 @@ async def start_test(
     Mulai tes profil karier baru
     Return: session_token + 72 RIASEC questions
     """
-    service = SessionService()
-    result = service.create_new_session(db, data.user_id)
+    service = SessionService(db)
+    result = service.create_new_session(data.user_id)
     
     return result
 
@@ -35,8 +35,8 @@ async def get_session_progress(
     db: Session = Depends(get_db)
 ):
     """Get session progress info"""
-    service = SessionService()
-    progress = service.get_progress(db, session_id)
+    service = SessionService(db)
+    progress = service.get_progress(session_id)
     
     if not progress:
         raise HTTPException(status_code=404, detail="Session not found")

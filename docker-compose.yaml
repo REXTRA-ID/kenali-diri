@@ -25,6 +25,8 @@ services:
     depends_on:
       - db
       - redis
+    volumes:
+      - .:/app
     environment:
       # App Settings
       APP_NAME: "Kenali Diri API"

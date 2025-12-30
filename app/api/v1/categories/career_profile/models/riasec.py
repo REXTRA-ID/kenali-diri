@@ -109,12 +109,12 @@ class RIASECResult(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "score_r BETWEEN 2 AND 10 AND "
-            "score_i BETWEEN 2 AND 10 AND "
-            "score_a BETWEEN 2 AND 10 AND "
-            "score_s BETWEEN 2 AND 10 AND "
-            "score_e BETWEEN 2 AND 10 AND "
-            "score_c BETWEEN 2 AND 10",
+            "score_r BETWEEN 0 AND 100 AND "
+            "score_i BETWEEN 0 AND 100 AND "
+            "score_a BETWEEN 0 AND 100 AND "
+            "score_s BETWEEN 0 AND 100 AND "
+            "score_e BETWEEN 0 AND 100 AND "
+            "score_c BETWEEN 0 AND 100",
             name="chk_riasec_results_scores"
         ),
         CheckConstraint(

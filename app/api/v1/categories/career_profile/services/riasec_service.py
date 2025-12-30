@@ -237,12 +237,18 @@ class RIASECService:
         try:
             # 1. Validate session exists
             session = self.session_repo.get_session_by_token(session_token)
+            print(f"DEBUG: Session status is '{session.status}'")
             
-            if session.status not in ['riasec_ongoing']:
+            if session.status not in ['riasec_pending', 'riasec_ongoing']:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid session status: {session.status}"
                 )
+            
+            # Update status to ongoing if it was pending
+            if session.status == 'riasec_pending':
+                session.status = 'riasec_ongoing'
+                self.db.commit()
             
             # 2. Validate responses
             if len(responses) != 72:

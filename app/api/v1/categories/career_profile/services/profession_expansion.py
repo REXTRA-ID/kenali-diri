@@ -266,13 +266,10 @@ class ProfessionExpansionService:
             try:
                 code_obj = self.riasec_repo.get_riasec_code_by_string(code_str)
                 
-                # TODO: Replace with actual profession query
-                # professions = self.db.query(Profession).filter(
-                #     Profession.riasec_code_id == code_obj.id
-                # ).limit(5).all()
-                
-                # PLACEHOLDER
-                professions = []
+                # SEARCH ACTUAL PROFESSIONS
+                professions = self.profession_repo.get_master_professions_by_riasec_code_id(
+                    code_obj.id, limit=5
+                )
                 
                 for prof in professions:
                     if prof.id not in seen_profession_ids:
@@ -314,8 +311,10 @@ class ProfessionExpansionService:
                 try:
                     code_obj = self.riasec_repo.get_riasec_code_by_string(code_str)
                     
-                    # TODO: Replace with actual profession query
-                    professions = []
+                    # SEARCH ACTUAL PROFESSIONS
+                    professions = self.profession_repo.get_master_professions_by_riasec_code_id(
+                        code_obj.id, limit=5
+                    )
                     
                     for prof in professions:
                         if prof.id not in seen_profession_ids:
@@ -366,14 +365,10 @@ class ProfessionExpansionService:
         NOTE: This is a placeholder. Replace with actual profession table query
         once the Profession model is created.
         """
-        # TODO: Replace with actual profession table query
-        # Example query:
-        # professions = self.db.query(Profession).filter(
-        #     Profession.riasec_code_id == riasec_code_id
-        # ).all()
-        
-        # PLACEHOLDER: Return empty list until Profession model exists
-        professions = []
+        # Query actual professions
+        professions = self.profession_repo.get_master_professions_by_riasec_code_id(
+            riasec_code_id, limit=10
+        )
         
         candidates = []
         order = start_order
@@ -456,15 +451,11 @@ class ProfessionExpansionService:
         if not code_id_map:
             return []
         
-        # TODO: Replace with actual profession table query
-        # Example query:
-        # code_ids = list(code_id_map.values())
-        # professions = self.db.query(Profession).filter(
-        #     Profession.riasec_code_id.in_(code_ids)
-        # ).limit(10).all()
-        
-        # PLACEHOLDER: Return empty list until Profession model exists
-        professions = []
+        # Query actual professions
+        code_ids = list(code_id_map.values())
+        professions = self.profession_repo.get_master_professions_by_riasec_code_ids(
+            code_ids, limit=10
+        )
         
         candidates = []
         order = start_order
@@ -547,13 +538,10 @@ class ProfessionExpansionService:
             try:
                 code_obj = self.riasec_repo.get_riasec_code_by_string(code_str)
                 
-                # TODO: Replace with actual profession table query
-                # professions = self.db.query(Profession).filter(
-                #     Profession.riasec_code_id == code_obj.id
-                # ).limit(5).all()
-                
-                # PLACEHOLDER: Return empty list until Profession model exists
-                professions = []
+                # Query actual professions
+                professions = self.profession_repo.get_master_professions_by_riasec_code_id(
+                    code_obj.id, limit=5
+                )
                 
                 for prof in professions:
                     if prof.id not in seen_ids:
@@ -595,13 +583,10 @@ class ProfessionExpansionService:
         try:
             code_obj = self.riasec_repo.get_riasec_code_by_string(dominant_type)
             
-            # TODO: Replace with actual profession table query
-            # professions = self.db.query(Profession).filter(
-            #     Profession.riasec_code_id == code_obj.id
-            # ).limit(10).all()
-            
-            # PLACEHOLDER: Return empty list until Profession model exists
-            professions = []
+            # Query actual professions
+            professions = self.profession_repo.get_master_professions_by_riasec_code_id(
+                code_obj.id, limit=10
+            )
             
             candidates = []
             order = start_order
@@ -650,32 +635,33 @@ class ProfessionExpansionService:
         
         candidates_data = candidates_obj.candidates_data
         
-        # TODO: Once Profession model exists, enrich with full profession details
-        # profession_ids = [c['profession_id'] for c in candidates_data.get('candidates', [])]
-        # professions = self.db.query(Profession).filter(
-        #     Profession.id.in_(profession_ids)
-        # ).all()
-        # profession_map = {p.id: p for p in professions}
+        # Enrich with full profession details from DigitalProfession table
+        from app.api.v1.categories.career_profile.models.digital_profession import DigitalProfession
+        
+        profession_ids = [c['profession_id'] for c in candidates_data.get('candidates', [])]
+        professions = self.db.query(DigitalProfession).filter(
+            DigitalProfession.id.in_(profession_ids)
+        ).all()
+        profession_map = {p.id: p for p in professions}
         
         # Enrich candidates with profession details
-        # enriched_candidates = []
-        # for candidate in candidates_data.get('candidates', []):
-        #     prof = profession_map.get(candidate['profession_id'])
-        #     if prof:
-        #         enriched_candidates.append({
-        #             **candidate,
-        #             'profession_name': prof.name,
-        #             'profession_description': prof.description,
-        #             # Add other profession fields as needed
-        #         })
+        enriched_candidates = []
+        for candidate in candidates_data.get('candidates', []):
+            prof = profession_map.get(candidate['profession_id'])
+            if prof:
+                enriched_candidates.append({
+                    **candidate,
+                    'profession_name': prof.title,
+                    'profession_description': prof.description,
+                    'riasec_code_id': prof.riasec_code_id
+                })
         
         return {
             "user_riasec_code": candidates_data.get('user_riasec_code'),
             "user_top_3_types": candidates_data.get('user_top_3_types'),
             "user_scores": candidates_data.get('user_scores'),
             "expansion_summary": candidates_data.get('expansion_summary'),
-            "candidates": candidates_data.get('candidates', [])
-            # TODO: Replace with enriched_candidates once Profession model exists
+            "candidates": enriched_candidates
         }
     
     def save_candidates(

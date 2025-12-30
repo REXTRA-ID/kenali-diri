@@ -5,6 +5,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from fastapi import HTTPException, status
 
 from app.api.v1.categories.career_profile.models.profession import IkigaiCandidateProfession
+from app.api.v1.categories.career_profile.models.digital_profession import DigitalProfession
 
 
 class Profession:
@@ -44,6 +45,26 @@ class ProfessionRepository:
     
     def __init__(self, db: Session):
         self.db = db
+    
+    def get_master_professions_by_riasec_code_id(
+        self,
+        riasec_code_id: int,
+        limit: int = 10
+    ) -> List[DigitalProfession]:
+        """Query actual digital professions from the master table"""
+        return self.db.query(DigitalProfession).filter(
+            DigitalProfession.riasec_code_id == riasec_code_id
+        ).limit(limit).all()
+
+    def get_master_professions_by_riasec_code_ids(
+        self,
+        riasec_code_ids: List[int],
+        limit: int = 20
+    ) -> List[DigitalProfession]:
+        """Query actual digital professions by multiple RIASEC code IDs"""
+        return self.db.query(DigitalProfession).filter(
+            DigitalProfession.riasec_code_id.in_(riasec_code_ids)
+        ).limit(limit).all()
     
     def get_professions_by_code_id(
         self,
