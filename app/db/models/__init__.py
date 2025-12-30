@@ -2,6 +2,9 @@ from .kenalidiri_category import KenaliDiriCategory
 from .kenalidiri_history import KenaliDiriHistory
 from .user import User
 
+# Career Profile Models
+from app.api.v1.categories.career_profile.models.digital_profession import DigitalProfession
+
 # from .riasec_code import RIASECCode
 # from .careerprofile_session import CareerProfileTestSession
 # from .riasec_question_set import RiasecQuestionSet

@@ -8,10 +8,14 @@ from app.api.v1.categories.career_profile.services.riasec_service import (
 from app.api.v1.categories.career_profile.services.profession_expansion import (
     ProfessionExpansionService
 )
+from app.api.v1.categories.career_profile.services.ikigai_service import (
+    IkigaiService
+)
 
 __all__ = [
     "SessionService",
     "RIASECService",
     "RIASECAnswerItem",
-    "ProfessionExpansionService"
+    "ProfessionExpansionService",
+    "IkigaiService"
 ]

@@ -103,13 +103,24 @@ class RIASECService:
     
     def calculate_scores(self, responses: List[RIASECAnswerItem]) -> Dict[str, int]:
         """
-        Calculate RIASEC scores from responses
+        Calculate RIASEC scores from responses using RAW SCORE method
+        
+        IMPORTANT RULES:
+        - Uses RAW SCORE (summation), NOT averaging!
+        - Each RIASEC type has 12 questions with answers 1-5
+        - Valid score range per type: 12-60 (12 × 1 = 12 min, 12 × 5 = 60 max)
+        - DO NOT divide by question count - this is intentional!
+        
+        Example:
+            - User answers all "R" questions with value 5: score_R = 60
+            - User answers all "R" questions with value 1: score_R = 12
+            - User answers all "R" questions with value 3: score_R = 36
         
         Args:
-            responses: List of user responses
+            responses: List of user responses (72 total: 12 per RIASEC type)
             
         Returns:
-            Dict with scores per type: {"R": 8, "I": 9, ...}
+            Dict with RAW scores per type: {"R": 50, "I": 48, "A": 46, ...}
         """
         # Initialize scores
         scores = {'R': 0, 'I': 0, 'A': 0, 'S': 0, 'E': 0, 'C': 0}
@@ -304,7 +315,8 @@ class RIASECService:
             candidates_data = self.profession_service.expand_candidates(
                 riasec_code=riasec_code,
                 riasec_code_id=riasec_code_obj.id,
-                user_scores=scores
+                user_scores=scores,
+                is_inconsistent_profile=is_inconsistent  # Pass inconsistency flag for Split-Path
             )
             
             # 8. Save candidates to DB

@@ -67,6 +67,7 @@ class CandidatesResponse(BaseModel):
     user_riasec_code: str
     user_top_3_types: List[str]
     user_scores: Dict[str, int]
-    candidates: List[Dict[str, Any]]
+    is_inconsistent_profile: bool = False  # NEW: Flag for Split-Path results
+    candidates: List[Dict[str, Any]]  # Each candidate may have optional "path": "A"|"B"
     expansion_summary: Dict[str, Any]
     total_candidates: int
