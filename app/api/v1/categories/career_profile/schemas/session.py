@@ -1,6 +1,9 @@
 from pydantic import BaseModel
 from datetime import datetime
 import uuid
+from typing import List
+
+from app.api.v1.categories.career_profile.schemas.riasec import RIASECQuestionSchema
 
 class SessionCreateRequest(BaseModel):
     user_id: uuid.UUID
@@ -11,7 +14,7 @@ class SessionResponse(BaseModel):
     riasec_completed_at: datetime | None = None
     ikigai_completed_at: datetime | None = None
     started_at: datetime
-    # questions: list | None = None  # TODO: Nanti dan optional, untuk initial response
+    questions: List[RIASECQuestionSchema]
 
 class SessionProgressResponse(BaseModel):
     session_token: str

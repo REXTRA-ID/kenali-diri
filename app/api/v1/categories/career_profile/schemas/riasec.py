@@ -1,17 +1,10 @@
 from pydantic import BaseModel, Field, validator
-from typing import List, Dict, Any
+from typing import List, Optional
 
-# Request
-class RIASECAnswerItem(BaseModel):
-    """Schema for individual response"""
-    question_id: int = Field(..., gt=0, description="Question ID")
-    answer_value: int = Field(..., ge=1, le=5, description="Answer value (1-5 scale)")
-    
-    @validator('answer_value')
-    def validate_answer(cls, v):
-        if not (1 <= v <= 5):
-            raise ValueError('Answer value must be between 1 and 5')
-        return v
+class QuestionSchema(BaseModel):
+    question_id: int
+    question_text: str
+    riasec_type: str  # R, I, A, S, E, or C
 
 class RIASECSubmitRequest(BaseModel):
     """Request schema for submitting RIASEC test"""
@@ -23,10 +16,10 @@ class RIASECSubmitRequest(BaseModel):
         if len(v) != 72:
             raise ValueError('Must provide exactly 72 responses (12 per RIASEC type)')
         
-        # Check for duplicate question IDs
-        question_ids = [r.question_id for r in v]
-        if len(question_ids) != len(set(question_ids)):
-            raise ValueError('Duplicate question IDs not allowed')
+        # Score harus 1-5
+        for question_id, score in v.items():
+            if not (1 <= score <= 5):
+                raise ValueError(f"Score for question {question_id} must be between 1-5")
         
         return v
 
@@ -43,15 +36,14 @@ class RIASECScoreDetail(BaseModel):
     score_e: int
     score_c: int
 
-class RIASECCodeInfo(BaseModel):
-    riasec_code: str
+class RIASECResultResponse(BaseModel):
+    # session_token: str
+    riasec_code: str  # e.g. "RIA"
     riasec_title: str
-    riasec_description: str
-    strengths: List[str]
-    challenges: List[str]
-    strategies: List[str]
-    work_environments: List[str]
-    interaction_styles: List[str]
+    riasec_scores: dict[str, int]  # {"R": 42, "I": 38, ...}
+    classification_type: str  # "single", "dual", "triple"
+    top_3_codes: list[str]  # ["R", "I", "A"]
+    code_details: RIASECCodeSchema
 
 class RIASECResultResponse(BaseModel):
     session_token: str

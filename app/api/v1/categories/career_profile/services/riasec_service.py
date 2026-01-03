@@ -1,35 +1,42 @@
-# app/api/v1/categories/career_profile/services/riasec_service.py
-import json
-import random
-from pathlib import Path
-from typing import List, Dict, Tuple, Any, Optional
-from sqlalchemy.orm import Session
-from fastapi import HTTPException, status
-from pydantic import BaseModel
-
-from app.api.v1.categories.career_profile.repositories.session_repo import SessionRepository
 from app.api.v1.categories.career_profile.repositories.riasec_repo import RIASECRepository
-from app.api.v1.categories.career_profile.services.profession_expansion import ProfessionExpansionService
-from app.api.v1.categories.career_profile.schemas.riasec import RIASECAnswerItem
+from app.api.v1.categories.career_profile.repositories.session_repo import SessionRepository
+from app.api.v1.categories.career_profile.utils.constants import QUESTION_TYPE_MAP
+from app.api.v1.categories.career_profile.utils.classification import classify_riasec_code
 
-from pprint import pprint # debug purpose
+class RIASECService:
+    def __init__(self):
+        self.riasec_repo = RIASECRepository()
+        self.session_repo = SessionRepository()
+        
+    def submit_and_calculate(self, db, session_id: int, responses: dict):
+        """
+        Submit RIASEC responses dan calculate scores:
+        1. Validate 72 responses
+        2. Calculate raw scores (R, I, A, S, E, C)
+        3. Classify RIASEC code
+        4. Save responses_data ke riasec_responses
+        5. Save result ke riasec_results (dengan kolom score_r, score_i, dsb)
+        6. Update session: riasec_completed = TRUE
+        """
+        # 1. Validate
+        if len(responses) != 72:
+            raise ValueError("Must have exactly 72 responses")
 
-# Helper
-def load_riasec_questions(questions_path):
-    with open(questions_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    
-    required_keys = {
-        'version', 'total_questions', 'questions_per_type', 
-        'types', 'scale', 'questions', 'questions_by_type'
-    }
+        # 2. Calculate raw scores
+        scores = {"R": 0, "I": 0, "A": 0, "S": 0, "E": 0, "C": 0}
 
-    if not required_keys.issubset(data.keys()):
-        missing = required_keys - data.keys()
-        raise ValueError(f"Invalid JSON format. Missing keys: {missing}")
+        for question_id_str, score in responses.items():
+            question_id = int(question_id_str)
+            riasec_type = QUESTION_TYPE_MAP.get(question_id)
+            if not riasec_type:
+                raise ValueError(f"Question ID {question_id} not mapped to any RIASEC type")
+            scores[riasec_type] += score
 
-    return data['questions']
+        # 3. Classify RIASEC code
+        riasec_code, code_type = classify_riasec_code(scores)
 
+        # 4. Query riasec_codes table untuk detail (deskripsi, title, dll)
+        code_detail = self.riasec_repo.get_code_by_code(db, riasec_code)
 
 class RIASECService:
     """Service for RIASEC test logic and calculations"""
@@ -165,67 +172,39 @@ class RIASECService:
             key=lambda x: (-x[1], riasec_order.get(x[0], 999)), 
             reverse=False
         )
-        
-        rank1_type, rank1_score = sorted_scores[0]
-        rank2_type, rank2_score = sorted_scores[1]
-        rank3_type, rank3_score = sorted_scores[2]
-        
-        # Check for single letter classification
-        gap_1_2 = rank1_score - rank2_score
-        relative_gap = gap_1_2 / rank1_score if rank1_score > 0 else 0
-        
-        if (gap_1_2 >= 9 and 
-            relative_gap >= 0.15 and 
-            rank1_score >= 40):
-            riasec_code = rank1_type
-            classification_type = 'single'
-        
-        # Check for dual letter classification
-        elif (rank1_score >= 40 and
-              gap_1_2 < 9 and
-              (rank2_score - rank3_score) >= 9 and
-              rank2_score >= 30):
-            riasec_code = rank1_type + rank2_type
-            classification_type = 'dual'
-        
-        # Fallback to triple letter
-        else:
-            riasec_code = rank1_type + rank2_type + rank3_type
-            classification_type = 'triple'
-        
-        # Check for inconsistent profile (opposite codes)
-        is_inconsistent = self._check_inconsistent_profile(riasec_code)
-        
-        return riasec_code, classification_type, is_inconsistent
+
+        # 7. Update session status
+        self.session_repo.mark_riasec_completed(db, session_id)
+
+        # Urutkan kunci untuk top 3
+        sorted_codes = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        top_3_list = [item[0] for item in sorted_codes[:3]]
+
+        return {
+            "riasec_code": riasec_code,
+            "responses_data": responses,
+            "riasec_title": code_detail.riasec_title,
+            "riasec_scores": scores,
+            "classification_type": code_type,
+            "top_3_codes": top_3_list,
+            "code_details": {
+                "code": code_detail.riasec_code,
+                "title": code_detail.riasec_title,
+                "description": code_detail.riasec_description,
+                "strengths": code_detail.strengths,
+                "challenges": code_detail.challenges
+            }
+        }
     
-    def _check_inconsistent_profile(self, riasec_code: str) -> bool:
-        """
-        Check if profile contains opposite/conflicting codes
+    def get_result(self, db, session_id: int):
+        """Get RIASEC result yang sudah dihitung"""
+        result = self.riasec_repo.get_result_by_session(db, session_id)
         
-        Opposite pairs: R-S, I-E, A-C
-        """
-        opposites = [
-            ('R', 'S'),
-            ('S', 'R'),
-            ('I', 'E'),
-            ('E', 'I'),
-            ('A', 'C'),
-            ('C', 'A')
-        ]
+        if not result:
+            return None
         
-        for pair in opposites:
-            if pair[0] in riasec_code and pair[1] in riasec_code:
-                return True
-        
-        return False
-    
-    def submit_riasec_test(
-        self,
-        session_token: str,
-        responses: List[RIASECAnswerItem]
-    ) -> Dict[str, Any]:
-        """
-        Submit RIASEC test and process complete flow
+        # Load code detail
+        code_detail = self.riasec_repo.get_code_by_id(db, result.riasec_code_id)
         
         Args:
             session_token: The session token
@@ -372,27 +351,20 @@ class RIASECService:
         """
         Retrieve RIASEC test result
         
-        Args:
-            session_token: The session token
-            
-        Returns:
-            Dict with result data
-        """
-        session = self.session_repo.get_session_by_token(session_token)
-        result = self.riasec_repo.get_result(session.id)
+        sorted_codes = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        top_3_list = [item[0] for item in sorted_codes[:3]]
         
         return {
-            "riasec_code": result.riasec_code.riasec_code,
-            "riasec_title": result.riasec_code.riasec_title,
-            "classification_type": result.classification_type,
-            "scores": {
-                "R": result.score_r,
-                "I": result.score_i,
-                "A": result.score_a,
-                "S": result.score_s,
-                "E": result.score_e,
-                "C": result.score_c
-            },
-            "is_inconsistent_profile": result.is_inconsistent_profile,
-            "calculated_at": result.calculated_at
+            "riasec_code": code_detail.riasec_code,
+            "riasec_title": code_detail.riasec_title,
+            "riasec_scores": scores,
+            "classification_type": result.riasec_code_type,
+            "top_3_codes": top_3_list,
+            "code_details": {
+                "code": code_detail.riasec_code,
+                "title": code_detail.riasec_title,
+                "description": code_detail.riasec_description,
+                "strengths": code_detail.strengths,
+                "challenges": code_detail.challenges
+            }
         }
