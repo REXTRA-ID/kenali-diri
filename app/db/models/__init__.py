@@ -2,9 +2,13 @@ from .kenalidiri_category import KenaliDiriCategory
 from .kenalidiri_history import KenaliDiriHistory
 from .user import User
 
-# from .riasec_code import RIASECCode
-# from .careerprofile_session import CareerProfileTestSession
-# from .riasec_question_set import RiasecQuestionSet
-# from .riasec_response import RiasecResponse
-# from .riasec_result import RIASECResult
-# from .ikigai_candidate_profession import IkigaiCandidateProfession
+# Career Profile Models
+from app.api.v1.categories.career_profile.models.digital_profession import DigitalProfession
+from app.api.v1.categories.career_profile.models.riasec import (
+    RIASECCode,
+    RIASECQuestionSet,
+    RIASECResponse,
+    RIASECResult
+)
+from app.api.v1.categories.career_profile.models.session import CareerProfileTestSession
+from app.api.v1.categories.career_profile.models.profession import IkigaiCandidateProfession

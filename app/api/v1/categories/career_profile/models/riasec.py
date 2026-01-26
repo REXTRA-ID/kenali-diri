@@ -24,9 +24,60 @@ class RIASECQuestionSet(Base):
     __tablename__ = "riasec_question_sets"
     
     id = Column(BigInteger, primary_key=True)
-    set_version = Column(String(20), default="v1")
-    questions_data = Column("question_ids", JSON, nullable=False)
-    is_active = Column(Boolean, default=True)
+
+    test_session_id = Column(
+        BigInteger,
+        ForeignKey(
+            "careerprofile_test_sessions.id",
+            ondelete="CASCADE"
+        ),
+        nullable=False,
+        unique=True
+    )
+
+    score_r = Column(Integer, nullable=False)
+    score_i = Column(Integer, nullable=False)
+    score_a = Column(Integer, nullable=False)
+    score_s = Column(Integer, nullable=False)
+    score_e = Column(Integer, nullable=False)
+    score_c = Column(Integer, nullable=False)
+
+    riasec_code_id = Column(
+        BigInteger,
+        ForeignKey("riasec_codes.id", ondelete="RESTRICT"),
+        nullable=False
+    )
+
+    classification_type = Column(String(20), nullable=False)
+    is_inconsistent_profile = Column(Boolean, default=False)
+
+    calculated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # session = relationship(
+    #     "CareerProfileTestSession",
+    #     back_populates="result"
+    # )
+
+    riasec_code = relationship(
+        "RIASECCode",
+        back_populates="results"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "score_r BETWEEN 0 AND 100 AND "
+            "score_i BETWEEN 0 AND 100 AND "
+            "score_a BETWEEN 0 AND 100 AND "
+            "score_s BETWEEN 0 AND 100 AND "
+            "score_e BETWEEN 0 AND 100 AND "
+            "score_c BETWEEN 0 AND 100",
+            name="chk_riasec_results_scores"
+        ),
+        CheckConstraint(
+            "classification_type IN ('single', 'dual', 'triple')",
+            name="chk_riasec_results_classification"
+        ),
+    )
 
 class RIASECResponse(Base):
     __tablename__ = "riasec_responses"

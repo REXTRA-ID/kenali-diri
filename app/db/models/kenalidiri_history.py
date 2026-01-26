@@ -12,12 +12,15 @@ from app.db.base import Base
 from sqlalchemy.orm import relationship
 
 
+from sqlalchemy.dialects.postgresql import UUID
+
+
 class KenaliDiriHistory(Base):
     __tablename__ = "kenalidiri_history"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
 
-    user_id = Column(BigInteger, nullable=False)
+    user_id = Column(UUID(as_uuid=True), nullable=False)
 
     test_category_id = Column(
         BigInteger,

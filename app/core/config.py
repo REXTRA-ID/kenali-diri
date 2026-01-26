@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # OpenRouter AI
     OPENROUTER_API_KEY: str
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
-    OPENROUTER_MODEL: str = "google/gemini-flash-1.5-8b"
+    OPENROUTER_MODEL: str = "google/gemini-3.0-flash"
 
     # AI Settings
     AI_MAX_TOKENS: int = 2000

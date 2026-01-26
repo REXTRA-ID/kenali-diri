@@ -29,15 +29,34 @@ class ProfessionExpansionService:
         self,
         riasec_code: str,
         riasec_code_id: int,
-        user_scores: Dict[str, int]
+        user_scores: Dict[str, int],
+        is_inconsistent_profile: bool = False
     ) -> Dict[str, Any]:
         """
         Expand profession candidates using 4-tier algorithm with runtime congruence
         
+        SPLIT-PATH STRATEGY (NEW):
+        If is_inconsistent_profile=True (opposite types detected: R-S, I-E, A-C):
+        - DO NOT use standard Tier 1-4 algorithm on combined code (e.g., "RS")
+        - Instead, split into two separate paths:
+            * Path A: First letter + hexagon-adjacent types (e.g., R → R, RI, RC)
+            * Path B: Second letter + hexagon-adjacent types (e.g., S → S, SA, SE)
+        - Tag each candidate with metadata: {"path": "A"} or {"path": "B"}
+        - This allows frontend to display: "Your interests span two different poles..."
+        
+        Hexagon Adjacent Mapping (Holland's Model):
+            R ← adjacent → I, C
+            I ← adjacent → R, A
+            A ← adjacent → I, S
+            S ← adjacent → A, E
+            E ← adjacent → S, C
+            C ← adjacent → E, R
+        
         Args:
-            riasec_code: User's RIASEC code (e.g., "RIA")
+            riasec_code: User's RIASEC code (e.g., "RIA" or "RS")
             riasec_code_id: Database ID of the RIASEC code
             user_scores: Dict with user's scores {"R": 50, "I": 48, "A": 46, ...}
+            is_inconsistent_profile: Flag indicating opposite types (default: False)
             
         Returns:
             Dict containing candidates and metadata for JSONB storage:
@@ -45,6 +64,7 @@ class ProfessionExpansionService:
                 "user_riasec_code": "RIA",
                 "user_top_3_types": ["R", "I", "A"],
                 "user_scores": {"R": 50, "I": 48, ...},
+                "is_inconsistent_profile": False,
                 "candidates": [
                     {
                         "profession_id": 10,
@@ -52,7 +72,8 @@ class ProfessionExpansionService:
                         "expansion_tier": 1,
                         "congruence_type": "exact_match",
                         "congruence_score": 1.0,
-                        "display_order": 1
+                        "display_order": 1,
+                        "path": "A"  # Only present if is_inconsistent_profile=True
                     }
                 ],
                 "expansion_summary": {
@@ -75,6 +96,15 @@ class ProfessionExpansionService:
         )
         top_3_types = [t[0] for t in sorted_scores[:3]]
         
+        # ===== SPLIT-PATH STRATEGY FOR INCONSISTENT PROFILES =====
+        if is_inconsistent_profile and len(riasec_code) >= 2:
+            return self._expand_candidates_split_path(
+                riasec_code,
+                user_scores,
+                top_3_types
+            )
+        
+        # ===== STANDARD 4-TIER ALGORITHM (CONSISTENT PROFILES) =====
         # Initialize tracking
         candidates = []
         seen_profession_ids: Set[int] = set()
@@ -149,6 +179,175 @@ class ProfessionExpansionService:
             "user_riasec_code": riasec_code,
             "user_top_3_types": top_3_types,
             "user_scores": user_scores,
+            "is_inconsistent_profile": False,
+            "candidates": candidates,
+            "expansion_summary": expansion_summary
+        }
+    
+    def _get_hexagon_adjacent(self, riasec_type: str) -> List[str]:
+        """
+        Get hexagon-adjacent types for a given RIASEC type (Holland's Hexagon Model)
+        
+        Mapping:
+            R ← adjacent → I, C
+            I ← adjacent → R, A
+            A ← adjacent → I, S
+            S ← adjacent → A, E
+            E ← adjacent → S, C
+            C ← adjacent → E, R
+        
+        Args:
+            riasec_type: Single RIASEC letter (e.g., "R")
+            
+        Returns:
+            List of adjacent types (e.g., ["I", "C"] for "R")
+        """
+        hexagon_map = {
+            'R': ['I', 'C'],
+            'I': ['R', 'A'],
+            'A': ['I', 'S'],
+            'S': ['A', 'E'],
+            'E': ['S', 'C'],
+            'C': ['E', 'R']
+        }
+        return hexagon_map.get(riasec_type, [])
+    
+    def _expand_candidates_split_path(
+        self,
+        riasec_code: str,
+        user_scores: Dict[str, int],
+        top_3_types: List[str]
+    ) -> Dict[str, Any]:
+        """
+        Expand candidates using Split-Path strategy for inconsistent profiles
+        
+        Strategy:
+            - Path A: Search professions based on first letter + adjacent types
+            - Path B: Search professions based on second letter + adjacent types
+        
+        Example:
+            riasec_code = "RS" (Realistic-Social, opposites)
+            Path A: Search R, RI, RC
+            Path B: Search S, SA, SE
+        
+        Args:
+            riasec_code: User's inconsistent code (e.g., "RS", "IE", "AC")
+            user_scores: User's RIASEC scores
+            top_3_types: Top 3 types from scores
+            
+        Returns:
+            Dict with candidates tagged by path ("A" or "B")
+        """
+        type_a = riasec_code[0]
+        type_b = riasec_code[1] if len(riasec_code) >= 2 else None
+        
+        candidates = []
+        seen_profession_ids: Set[int] = set()
+        display_order = 1
+        
+        expansion_summary = {
+            "path_a_count": 0,
+            "path_b_count": 0,
+            "total_unique": 0,
+            "path_a_codes_used": [],
+            "path_b_codes_used": []
+        }
+        
+        # ===== PATH A: First Type + Adjacent =====
+        path_a_codes = [type_a]  # Start with dominant type
+        adjacent_a = self._get_hexagon_adjacent(type_a)
+        
+        # Add 2-letter combinations with adjacent types
+        for adj in adjacent_a:
+            path_a_codes.append(type_a + adj)
+        
+        # Search professions for Path A
+        for code_str in path_a_codes:
+            try:
+                code_obj = self.riasec_repo.get_riasec_code_by_string(code_str)
+                
+                # SEARCH ACTUAL PROFESSIONS
+                professions = self.profession_repo.get_master_professions_by_riasec_code_id(
+                    code_obj.id, limit=5
+                )
+                
+                for prof in professions:
+                    if prof.id not in seen_profession_ids:
+                        candidates.append({
+                            "profession_id": prof.id,
+                            "riasec_code_id": code_obj.id,
+                            "expansion_tier": None,  # Not using standard tiers  
+                            "congruence_type": "split_path",
+                            "congruence_score": 0.9 if code_str == type_a else 0.7,
+                            "display_order": display_order,
+                            "path": "A",
+                            "matched_code": code_str
+                        })
+                        seen_profession_ids.add(prof.id)
+                        display_order += 1
+                        expansion_summary["path_a_count"] += 1
+                
+                expansion_summary["path_a_codes_used"].append(code_str)
+                
+                # Limit to prevent overwhelming results
+                if expansion_summary["path_a_count"] >= 10:
+                    break
+                    
+            except HTTPException:
+                # Code doesn't exist in DB, skip
+                continue
+        
+        # ===== PATH B: Second Type + Adjacent =====
+        if type_b:
+            path_b_codes = [type_b]
+            adjacent_b = self._get_hexagon_adjacent(type_b)
+            
+            # Add 2-letter combinations with adjacent types
+            for adj in adjacent_b:
+                path_b_codes.append(type_b + adj)
+            
+            # Search professions for Path B
+            for code_str in path_b_codes:
+                try:
+                    code_obj = self.riasec_repo.get_riasec_code_by_string(code_str)
+                    
+                    # SEARCH ACTUAL PROFESSIONS
+                    professions = self.profession_repo.get_master_professions_by_riasec_code_id(
+                        code_obj.id, limit=5
+                    )
+                    
+                    for prof in professions:
+                        if prof.id not in seen_profession_ids:
+                            candidates.append({
+                                "profession_id": prof.id,
+                                "riasec_code_id": code_obj.id,
+                                "expansion_tier": None,
+                                "congruence_type": "split_path",
+                                "congruence_score": 0.9 if code_str == type_b else 0.7,
+                                "display_order": display_order,
+                                "path": "B",
+                                "matched_code": code_str
+                            })
+                            seen_profession_ids.add(prof.id)
+                            display_order += 1
+                            expansion_summary["path_b_count"] += 1
+                    
+                    expansion_summary["path_b_codes_used"].append(code_str)
+                    
+                    # Limit to prevent overwhelming results
+                    if expansion_summary["path_b_count"] >= 10:
+                        break
+                        
+                except HTTPException:
+                    continue
+        
+        expansion_summary["total_unique"] = len(seen_profession_ids)
+        
+        return {
+            "user_riasec_code": riasec_code,
+            "user_top_3_types": top_3_types,
+            "user_scores": user_scores,
+            "is_inconsistent_profile": True,
             "candidates": candidates,
             "expansion_summary": expansion_summary
         }
@@ -166,14 +365,10 @@ class ProfessionExpansionService:
         NOTE: This is a placeholder. Replace with actual profession table query
         once the Profession model is created.
         """
-        # TODO: Replace with actual profession table query
-        # Example query:
-        # professions = self.db.query(Profession).filter(
-        #     Profession.riasec_code_id == riasec_code_id
-        # ).all()
-        
-        # PLACEHOLDER: Return empty list until Profession model exists
-        professions = []
+        # Query actual professions
+        professions = self.profession_repo.get_master_professions_by_riasec_code_id(
+            riasec_code_id, limit=10
+        )
         
         candidates = []
         order = start_order
@@ -256,15 +451,11 @@ class ProfessionExpansionService:
         if not code_id_map:
             return []
         
-        # TODO: Replace with actual profession table query
-        # Example query:
-        # code_ids = list(code_id_map.values())
-        # professions = self.db.query(Profession).filter(
-        #     Profession.riasec_code_id.in_(code_ids)
-        # ).limit(10).all()
-        
-        # PLACEHOLDER: Return empty list until Profession model exists
-        professions = []
+        # Query actual professions
+        code_ids = list(code_id_map.values())
+        professions = self.profession_repo.get_master_professions_by_riasec_code_ids(
+            code_ids, limit=10
+        )
         
         candidates = []
         order = start_order
@@ -347,13 +538,10 @@ class ProfessionExpansionService:
             try:
                 code_obj = self.riasec_repo.get_riasec_code_by_string(code_str)
                 
-                # TODO: Replace with actual profession table query
-                # professions = self.db.query(Profession).filter(
-                #     Profession.riasec_code_id == code_obj.id
-                # ).limit(5).all()
-                
-                # PLACEHOLDER: Return empty list until Profession model exists
-                professions = []
+                # Query actual professions
+                professions = self.profession_repo.get_master_professions_by_riasec_code_id(
+                    code_obj.id, limit=5
+                )
                 
                 for prof in professions:
                     if prof.id not in seen_ids:
@@ -395,13 +583,10 @@ class ProfessionExpansionService:
         try:
             code_obj = self.riasec_repo.get_riasec_code_by_string(dominant_type)
             
-            # TODO: Replace with actual profession table query
-            # professions = self.db.query(Profession).filter(
-            #     Profession.riasec_code_id == code_obj.id
-            # ).limit(10).all()
-            
-            # PLACEHOLDER: Return empty list until Profession model exists
-            professions = []
+            # Query actual professions
+            professions = self.profession_repo.get_master_professions_by_riasec_code_id(
+                code_obj.id, limit=10
+            )
             
             candidates = []
             order = start_order
@@ -450,32 +635,33 @@ class ProfessionExpansionService:
         
         candidates_data = candidates_obj.candidates_data
         
-        # TODO: Once Profession model exists, enrich with full profession details
-        # profession_ids = [c['profession_id'] for c in candidates_data.get('candidates', [])]
-        # professions = self.db.query(Profession).filter(
-        #     Profession.id.in_(profession_ids)
-        # ).all()
-        # profession_map = {p.id: p for p in professions}
+        # Enrich with full profession details from DigitalProfession table
+        from app.api.v1.categories.career_profile.models.digital_profession import DigitalProfession
+        
+        profession_ids = [c['profession_id'] for c in candidates_data.get('candidates', [])]
+        professions = self.db.query(DigitalProfession).filter(
+            DigitalProfession.id.in_(profession_ids)
+        ).all()
+        profession_map = {p.id: p for p in professions}
         
         # Enrich candidates with profession details
-        # enriched_candidates = []
-        # for candidate in candidates_data.get('candidates', []):
-        #     prof = profession_map.get(candidate['profession_id'])
-        #     if prof:
-        #         enriched_candidates.append({
-        #             **candidate,
-        #             'profession_name': prof.name,
-        #             'profession_description': prof.description,
-        #             # Add other profession fields as needed
-        #         })
+        enriched_candidates = []
+        for candidate in candidates_data.get('candidates', []):
+            prof = profession_map.get(candidate['profession_id'])
+            if prof:
+                enriched_candidates.append({
+                    **candidate,
+                    'profession_name': prof.title,
+                    'profession_description': prof.description,
+                    'riasec_code_id': prof.riasec_code_id
+                })
         
         return {
             "user_riasec_code": candidates_data.get('user_riasec_code'),
             "user_top_3_types": candidates_data.get('user_top_3_types'),
             "user_scores": candidates_data.get('user_scores'),
             "expansion_summary": candidates_data.get('expansion_summary'),
-            "candidates": candidates_data.get('candidates', [])
-            # TODO: Replace with enriched_candidates once Profession model exists
+            "candidates": enriched_candidates
         }
     
     def save_candidates(

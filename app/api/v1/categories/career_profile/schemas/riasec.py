@@ -7,14 +7,14 @@ class QuestionSchema(BaseModel):
     riasec_type: str  # R, I, A, S, E, or C
 
 class RIASECSubmitRequest(BaseModel):
-    session_token: str
-    responses: dict[str, int] = Field(...)  # {"1": 4, "2": 5, ..., "72": 3}
+    """Request schema for submitting RIASEC test"""
+    session_token: str = Field(..., description="Session token")
+    responses: List[RIASECAnswerItem] = Field(..., min_items=72, max_items=72)
     
     @validator('responses')
-    def validate_responses(cls, v):
-        # Harus ada 72 responses
+    def validate_responses_count(cls, v):
         if len(v) != 72:
-            raise ValueError("Must have exactly 72 responses")
+            raise ValueError('Must provide exactly 72 responses (12 per RIASEC type)')
         
         # Score harus 1-5
         for question_id, score in v.items():
@@ -23,12 +23,18 @@ class RIASECSubmitRequest(BaseModel):
         
         return v
 
-class RIASECCodeSchema(BaseModel):
-    code: str
-    title: str
-    description: str
-    strengths: list[str]
-    challenges: list[str]
+# Response
+class QuestionSetResponse(BaseModel):
+    question_ids: List[int]  # 72 IDs
+    questions: List[dict]     # Full question data
+
+class RIASECScoreDetail(BaseModel):
+    score_r: int
+    score_i: int
+    score_a: int
+    score_s: int
+    score_e: int
+    score_c: int
 
 class RIASECResultResponse(BaseModel):
     # session_token: str
@@ -39,9 +45,21 @@ class RIASECResultResponse(BaseModel):
     top_3_codes: list[str]  # ["R", "I", "A"]
     code_details: RIASECCodeSchema
 
-class RIASECQuestionSchema(BaseModel):
-    code: str
-    dimension: str
-    question_id: int
-    question_text: str  
-    riasec_type: str
+class RIASECResultResponse(BaseModel):
+    session_token: str
+    status: str
+    scores: Dict[str, int]
+    code_info: Dict[str, Any]
+    classification_type: str
+    is_inconsistent_profile: bool
+    candidates_summary: Dict[str, Any]
+    
+class CandidatesResponse(BaseModel):
+    """Response schema for candidates list"""
+    user_riasec_code: str
+    user_top_3_types: List[str]
+    user_scores: Dict[str, int]
+    is_inconsistent_profile: bool = False  # NEW: Flag for Split-Path results
+    candidates: List[Dict[str, Any]]  # Each candidate may have optional "path": "A"|"B"
+    expansion_summary: Dict[str, Any]
+    total_candidates: int
