@@ -4,6 +4,32 @@ from app.api.v1.categories.career_profile.models.riasec import (
 )
 
 class RIASECRepository:
+    def __init__(self, db: Session = None):
+        """
+        Mendukung dua pola penggunaan:
+        1. Constructor injection: repo = RIASECRepository(db)  — dipakai profession_expansion.py
+        2. Tanpa db: repo = RIASECRepository(); repo.get_code_by_id(db, id) — pola lama
+        """
+        self.db = db
+
+    def get_riasec_code_by_string(self, code: str):
+        """
+        Convenience method: cari RIASECCode berdasarkan string kode (e.g. 'RIA', 'RI').
+        Digunakan oleh profession_expansion.py.
+        Menggunakan self.db yang di-inject via constructor.
+        Raise HTTPException 404 jika tidak ditemukan.
+        """
+        from fastapi import HTTPException, status
+        if not self.db:
+            raise RuntimeError("RIASECRepository tidak punya db session — gunakan constructor injection.")
+        code_obj = self.db.query(RIASECCode).filter_by(riasec_code=code).first()
+        if not code_obj:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"RIASEC code '{code}' tidak ditemukan di database."
+            )
+        return code_obj
+
     def get_active_question_set(self, db: Session):
         """Get active question set (72 questions)"""
         question_set = db.query(RIASECQuestionSet).filter_by(is_active=True).first()

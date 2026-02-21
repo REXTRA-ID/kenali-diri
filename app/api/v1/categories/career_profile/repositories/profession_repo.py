@@ -6,6 +6,7 @@ from fastapi import HTTPException, status
 
 from app.api.v1.categories.career_profile.models.profession import IkigaiCandidateProfession
 from app.api.v1.categories.career_profile.models.digital_profession import DigitalProfession
+from app.api.v1.categories.career_profile.models.riasec import RIASECCode
 
 
 class Profession:
@@ -74,12 +75,32 @@ class ProfessionRepository:
         return self.db.query(DigitalProfession).filter(
             DigitalProfession.riasec_code_id.in_(riasec_code_ids)
         ).limit(limit).all()
-    
+
+    def find_by_riasec_code(
+        self,
+        riasec_code: str,
+        limit: int = 30
+    ) -> List[DigitalProfession]:
+        """
+        Cari DigitalProfession berdasarkan string kode RIASEC (e.g. 'RIA', 'RI', 'R').
+        Digunakan oleh riasec_service.py saat ekspansi kandidat profesi (Tier 1-4).
+        Melakukan JOIN DigitalProfession → RIASECCode.
+        """
+        return (
+            self.db.query(DigitalProfession)
+            .join(RIASECCode, DigitalProfession.riasec_code_id == RIASECCode.id)
+            .filter(RIASECCode.riasec_code == riasec_code)
+            .limit(limit)
+            .all()
+        )
+
+
     def get_professions_by_code_id(
         self,
         riasec_code_id: int,
         test_session_id: Optional[int] = None
     ) -> List[Profession]:
+
         """
         Query professions by RIASEC code ID from JSONB candidates_data
         

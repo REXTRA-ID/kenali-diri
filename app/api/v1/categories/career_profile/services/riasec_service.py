@@ -748,11 +748,9 @@ class RIASECService:
         candidate_record = IkigaiCandidateProfession(
             test_session_id=session_id,
             candidates_data=candidates_data,
-            total_candidates=len(candidates),
-            generation_strategy=expansion_strategy,
-            max_candidates_limit=30
         )
         self.db.add(candidate_record)
+
 
     def _mark_riasec_completed(self, session: CareerProfileTestSession):
         """Update status sesi ke riasec_completed dan isi timestamp."""
