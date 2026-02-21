@@ -301,6 +301,201 @@ hasilkan narasi 4 dimensi Ikigai (masing-masing tepat 2 kalimat).
             return []
 
     
+    # =========================================================================
+    # SCORING BATCH (Brief Ikigai Part 2 §4.3) — FUNGSI UTAMA
+    # 1 call per dimensi, menilai SEMUA kandidat profesi sekaligus
+    # =========================================================================
+
+    SCORING_PROMPT_TEMPLATE = """\
+Kamu adalah sistem evaluasi relevansi karier. Tugasmu adalah menilai \
+seberapa relevan teks alasan pengguna dengan setiap profesi kandidat.
+
+DIMENSI YANG DINILAI: {dimension_label}
+({dimension_description})
+
+TEKS JAWABAN PENGGUNA:
+"{user_reasoning_text}"
+
+DAFTAR PROFESI KANDIDAT:
+{professions_block}
+
+RUBRIK PENILAIAN (untuk menghitung r_raw per profesi):
+Nilai r_raw = 0.40×K + 0.30×S + 0.30×B
+
+Komponen K (Kecocokan Topik & Kata Kunci, bobot 40%):
+- 0.00 = tidak ada kesamaan topik sama sekali
+- 0.25 = relevan tapi sangat umum
+- 0.50 = ada kata kunci atau skill yang terkait
+- 0.75 = menyebut aktivitas/skill inti dengan konteks
+- 1.00 = menyebut beberapa skill inti dengan konteks spesifik
+
+Komponen S (Sentimen & Intensitas Minat, bobot 30%):
+- 0.00 = negatif/menolak profesi ini
+- 0.25 = netral
+- 0.50 = positif lemah
+- 0.75 = positif jelas
+- 1.00 = positif sangat kuat dan konsisten
+
+Komponen B (Spesifisitas & Bukti, bobot 30%):
+- 0.00 = sangat vague, tidak ada bukti
+- 0.25 = umum tanpa contoh
+- 0.50 = ada contoh singkat
+- 0.75 = contoh jelas dengan detail konteks
+- 1.00 = contoh kuat + detail + menunjukkan pola
+
+ATURAN OUTPUT:
+- Kembalikan HANYA JSON array valid, tidak ada teks tambahan
+- Hitung r_raw untuk SETIAP profesi di daftar
+- r_raw harus dalam range 0.00 - 1.00, 2 desimal
+- Nilai r_raw harus BERBEDA antar profesi (hindari semua nilai sama)
+- Urutkan array berdasarkan profession_id (ascending)
+
+FORMAT OUTPUT:
+[
+  {{"profession_id": <int>, "r_raw": <float>}},
+  ...
+]"""
+
+    DIMENSION_LABELS = {
+        "what_you_love": {
+            "label": "What You Love (Apa yang Kamu Sukai)",
+            "description": "Nilai seberapa relevan teks dengan aktivitas atau aspek pekerjaan yang disukai user. Fokus pada ekspresi ketertarikan, kesenangan, atau motivasi intrinsik."
+        },
+        "what_you_are_good_at": {
+            "label": "What You Are Good At (Apa yang Kamu Kuasai)",
+            "description": "Nilai seberapa relevan teks dengan kompetensi, keahlian, atau kemampuan yang dimiliki user. Fokus pada kata-kata yang menunjukkan kemampuan, pengalaman, atau keyakinan."
+        },
+        "what_the_world_needs": {
+            "label": "What The World Needs (Apa yang Dibutuhkan Dunia)",
+            "description": "Nilai seberapa relevan teks dengan dampak sosial, nilai manfaat, atau masalah yang ingin diselesaikan user. Fokus pada orientasi kontribusi, misi, atau tujuan."
+        },
+        "what_you_can_be_paid_for": {
+            "label": "What You Can Be Paid For (Apa yang Bisa Dibayar)",
+            "description": "Nilai seberapa relevan teks dengan realitas pasar kerja, preferensi gaya kerja, atau ekspektasi kompensasi user. Fokus pada pragmatisme karier."
+        }
+    }
+
+    async def score_all_professions_for_dimension(
+        self,
+        dimension_name: str,
+        user_reasoning_text: str,
+        profession_contexts: list  # [{profession_id, name, about_description, activities, hard_skills_required}]
+    ) -> list:
+        """
+        Scoring batch: 1 Gemini call per dimensi, menilai SEMUA kandidat profesi sekaligus.
+
+        Sesuai Brief Ikigai Part 2 §4.3. Setiap call mengirim 1 teks user dan
+        meminta penilaian relevansi terhadap semua kandidat profesi.
+
+        Args:
+            dimension_name: Salah satu dari IKIGAI_DIMENSIONS
+            user_reasoning_text: Teks jawaban user untuk dimensi ini
+            profession_contexts: List profesi dengan info ringkas untuk scoring
+
+        Returns:
+            List [{"profession_id": int, "r_raw": float}] — r_raw antara 0.0-1.0
+            Jika parsing gagal, fallback r_raw = 0.5 untuk semua profesi
+        """
+        dim_info = self.DIMENSION_LABELS.get(dimension_name, {
+            "label": dimension_name,
+            "description": "Nilai relevansi teks user terhadap profesi."
+        })
+
+        # Build professions block (ringkas untuk efisiensi token)
+        professions_block = ""
+        for prof in profession_contexts:
+            activities_str = ", ".join((prof.get("activities") or [])[:3]) or "Tidak tersedia"
+            skills_str = ", ".join((prof.get("hard_skills_required") or [])[:3]) or "Tidak tersedia"
+            about = (prof.get("about_description") or "")[:200]
+
+            professions_block += (
+                f"\n- Profesi ID {prof['profession_id']}: {prof['name']}\n"
+                f"  Deskripsi singkat: {about}\n"
+                f"  Aktivitas utama: {activities_str}\n"
+                f"  Skill utama: {skills_str}"
+            )
+
+        prompt = self.SCORING_PROMPT_TEMPLATE.format(
+            dimension_label=dim_info["label"],
+            dimension_description=dim_info["description"],
+            user_reasoning_text=user_reasoning_text,
+            professions_block=professions_block.strip()
+        )
+
+        messages = [{"role": "user", "content": prompt}]
+
+        # Fallback data jika API gagal
+        fallback = [{"profession_id": p["profession_id"], "r_raw": 0.5} for p in profession_contexts]
+
+        try:
+            raw_response = await self.chat_completion(
+                messages=messages,
+                max_tokens=2000,
+                temperature=0.1,  # Rendah untuk konsistensi scoring numerik
+                dimension=f"ikigai_scoring_{dimension_name}"
+            )
+
+            cleaned = self._clean_json_response(raw_response)
+            parsed = json.loads(cleaned)
+
+            if not isinstance(parsed, list):
+                logger.error("ikigai_scoring_not_list", dimension=dimension_name)
+                return fallback
+
+            # Validasi & sanitasi output
+            result = []
+            profession_ids_expected = {p["profession_id"] for p in profession_contexts}
+            seen_ids = set()
+
+            for item in parsed:
+                pid = item.get("profession_id")
+                r_raw = item.get("r_raw", 0.5)
+
+                if not isinstance(pid, int) or pid not in profession_ids_expected:
+                    continue
+                if pid in seen_ids:
+                    continue
+
+                r_raw = max(0.0, min(1.0, float(r_raw)))
+                result.append({"profession_id": pid, "r_raw": round(r_raw, 4)})
+                seen_ids.add(pid)
+
+            # Tambahkan profesi yang tidak ada di response dengan fallback
+            for prof in profession_contexts:
+                if prof["profession_id"] not in seen_ids:
+                    result.append({"profession_id": prof["profession_id"], "r_raw": 0.5})
+                    logger.warning(
+                        "ikigai_scoring_profession_missing_in_response",
+                        profession_id=prof["profession_id"],
+                        dimension=dimension_name
+                    )
+
+            logger.info(
+                "ikigai_scoring_batch_complete",
+                dimension=dimension_name,
+                professions_scored=len(result)
+            )
+            return result
+
+        except json.JSONDecodeError as e:
+            logger.error(
+                "ikigai_scoring_json_parse_error",
+                dimension=dimension_name,
+                error=str(e)
+            )
+            return fallback
+        except Exception as e:
+            logger.error(
+                "ikigai_scoring_failed",
+                dimension=dimension_name,
+                error=str(e)
+            )
+            return fallback
+
+    # =========================================================================
+    # FUNGSI LAMA — menilai 1 profesi per call (tidak dipakai untuk scoring baru)
+    # =========================================================================
+
     async def evaluate_ikigai_response(
         self,
         user_essay: str,
