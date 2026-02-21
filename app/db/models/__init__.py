@@ -12,3 +12,8 @@ from app.api.v1.categories.career_profile.models.riasec import (
 )
 from app.api.v1.categories.career_profile.models.session import CareerProfileTestSession
 from app.api.v1.categories.career_profile.models.profession import IkigaiCandidateProfession
+from app.api.v1.categories.career_profile.models.ikigai import (
+    IkigaiResponse,
+    IkigaiDimensionScores,
+    IkigaiTotalScores
+)

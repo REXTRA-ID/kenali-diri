@@ -1,510 +1,498 @@
-# app/api/v1/categories/career_profile/services/ikigai_service.py
-"""
-Ikigai Evaluation Service
-
-This service orchestrates the AI-powered evaluation of user essays
-against profession candidates. Uses async/parallel processing for
-high performance.
-
-Key Features:
-- Parallel AI evaluation using asyncio.gather
-- Weighted scoring formula: Score = 0.4K + 0.3S + 0.3B
-- Confidence-adjusted click bonus
-- Comprehensive error handling
-"""
 import asyncio
-import time
+import json
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
+import time
+
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 import structlog
 
 from app.api.v1.categories.career_profile.repositories.session_repo import SessionRepository
 from app.api.v1.categories.career_profile.repositories.profession_repo import ProfessionRepository
+from app.api.v1.categories.career_profile.services.profession_expansion import ProfessionExpansionService
+from app.api.v1.categories.career_profile.models.ikigai import IkigaiResponse, IkigaiDimensionScores, IkigaiTotalScores
 from app.api.v1.categories.career_profile.schemas.ikigai import (
-    IkigaiSubmitRequest,
-    IkigaiSubmitResponse,
-    ProfessionIkigaiScore,
-    DimensionScoreDetail
+    IkigaiContentResponse,
+    DimensionContent,
+    CandidateWithContent,
+    DimensionSubmitResponse,
+    IkigaiCompletionResponse,
+    ProfessionScoreBreakdown
 )
+from app.db.models.user import User
 from app.shared.ai_client import gemini_client
+from app.shared.cache import redis_client
 from app.shared.scoring_utils import (
+    calculate_min_max_normalization,
+    calculate_ikigai_dimension_average,
     calculate_confidence_adjusted_click,
-    calculate_final_profession_score,
-    normalize_score_to_percentage,
-    get_match_level
+    calculate_final_profession_score
 )
 
 logger = structlog.get_logger()
 
+# Consts
+IKIGAI_DIMENSIONS = [
+    "what_you_love",
+    "what_you_are_good_at",
+    "what_the_world_needs",
+    "what_you_can_be_paid_for"
+]
 
 class IkigaiService:
-    """
-    Service for Ikigai test evaluation and scoring
-    
-    Handles:
-    - Retrieving profession candidates from RIASEC results
-    - Parallel AI evaluation of user essays
-    - Score calculation and aggregation
-    - Result ranking and storage
-    """
-    
-    # Dimension mapping for iteration
-    DIMENSIONS = ["love", "good_at", "world_needs", "paid_for"]
-    
     def __init__(self, db: Session):
         self.db = db
         self.session_repo = SessionRepository(db)
         self.profession_repo = ProfessionRepository(db)
+        self.expansion_service = ProfessionExpansionService(db)
     
-    async def submit_ikigai_test(
-        self,
-        request: IkigaiSubmitRequest,
-        clicked_profession_ids: Optional[List[int]] = None
-    ) -> IkigaiSubmitResponse:
-        """
-        Submit and process Ikigai test with parallel AI evaluation
+    # --------------------------------------------------------------------------
+    # PHASE 1: GENERATE CONTENT
+    # --------------------------------------------------------------------------
+    async def start_ikigai_session(self, user: User, session_token: str) -> IkigaiContentResponse:
+        session = self.session_repo.get_by_token(self.db, session_token)
+        if not session or session.user_id != user.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
         
-        Flow:
-        1. Validate session and get candidates
-        2. Extract essays from request
-        3. Parallel evaluate all (profession × dimension) combinations
-        4. Calculate weighted scores
-        5. Rank and return results
+        if session.status not in ["riasec_completed", "ikigai_ongoing"]:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Invalid state: {session.status}")
         
-        Args:
-            request: IkigaiSubmitRequest with session_token and 4 essays
-            clicked_profession_ids: List of profession IDs user clicked/selected
+        if session.status == "riasec_completed":
+            session.status = "ikigai_ongoing"
+            self.db.commit()
+
+        # check if already in redis
+        cache_key = f"ikigai:content:{session_token}"
+        cached_data = redis_client.get(cache_key)
+        if cached_data:
+            content = json.loads(cached_data)
+            return IkigaiContentResponse(
+                session_token=session_token,
+                status="ikigai_ongoing",
+                generated_at=content["generated_at"],
+                regenerated=False,
+                total_display_candidates=len(content["candidates"]),
+                message="Konten cache ditarik",
+                candidates_with_content=content["candidates"]
+            )
+        
+        # generate content
+        candidates = await self._generate_ikigai_content(session.id)
+        
+        # cache to Redis
+        now_str = datetime.now(timezone.utc).isoformat()
+        cache_payload = {
+            "generated_at": now_str,
+            "candidates": candidates
+        }
+        redis_client.setex(cache_key, 7200, json.dumps(cache_payload))
+        
+        return IkigaiContentResponse(
+            session_token=session_token,
+            status="ikigai_ongoing",
+            generated_at=now_str,
+            regenerated=True,
+            total_display_candidates=len(candidates),
+            message="Sesi dimulai dan konten berhasil di-generate",
+            candidates_with_content=candidates
+        )
+
+    async def get_ikigai_content(self, user: User, session_token: str) -> IkigaiContentResponse:
+        session = self.session_repo.get_by_token(self.db, session_token)
+        if not session or session.user_id != user.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
             
-        Returns:
-            IkigaiSubmitResponse with ranked professions and scores
-        """
+        if session.status != "ikigai_ongoing":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sesi Ikigai tidak dalam status ongoing")
+            
+        cache_key = f"ikigai:content:{session_token}"
+        cached_data = redis_client.get(cache_key)
+        
+        if cached_data:
+            content = json.loads(cached_data)
+            return IkigaiContentResponse(
+                session_token=session_token,
+                status="ikigai_ongoing",
+                generated_at=content["generated_at"],
+                regenerated=False,
+                total_display_candidates=len(content["candidates"]),
+                message="Berhasil menarik konten Ikigai dari sesi.",
+                candidates_with_content=content["candidates"]
+            )
+        
+        # Redis miss -> regenerate since it's still ongoing
+        candidates = await self._generate_ikigai_content(session.id)
+        now_str = datetime.now(timezone.utc).isoformat()
+        cache_payload = {
+            "generated_at": now_str,
+            "candidates": candidates
+        }
+        redis_client.setex(cache_key, 7200, json.dumps(cache_payload))
+        
+        return IkigaiContentResponse(
+            session_token=session_token,
+            status="ikigai_ongoing",
+            generated_at=now_str,
+            regenerated=True,
+            total_display_candidates=len(candidates),
+            message="Konten lama expired, regenerasi berhasil",
+            candidates_with_content=candidates
+        )
+
+    async def _generate_ikigai_content(self, session_id: int) -> List[Dict]:
+        candidates_data = self.expansion_service.get_candidates_with_details(session_id)
+        # Ambil maksimal 5 kandidat dari display order 1..5
+        top_candidates = [c for c in candidates_data['candidates'] if c.get('display_order', 99) <= 5]
+        
+        # Prepare context for AI batch generate
+        profession_contexts = []
+        for c in top_candidates:
+            profession_contexts.append({
+                "profession_id": c['profession_id'],
+                "name": c.get('profession_name'),
+                "riasec_code": c.get('riasec_code'), # Might be missed, we can fallback to candidates matched_code
+                "riasec_title": c.get('riasec_code'),
+                "about_description": c.get('profession_description'),
+                "riasec_description": "",
+                "activities": [],
+                "hard_skills_required": [],
+                "soft_skills_required": [],
+                "tools_required": [],
+                "market_insights": [],
+            })
+            
+        ai_responses = await gemini_client.generate_ikigai_content(profession_contexts)
+        
+        ai_map = {item['profession_id']: item for item in ai_responses if 'profession_id' in item}
+        
+        result_candidates = []
+        for c in top_candidates:
+            pid = c['profession_id']
+            ai_data = ai_map.get(pid, {})
+            # fallback jika gagal content
+            what_you_love = ai_data.get('what_you_love', 'Deskripsi tidak tersedia.')
+            what_you_are_good_at = ai_data.get('what_you_are_good_at', 'Deskripsi tidak tersedia.')
+            what_the_world_needs = ai_data.get('what_the_world_needs', 'Deskripsi tidak tersedia.')
+            what_you_can_be_paid_for = ai_data.get('what_you_can_be_paid_for', 'Deskripsi tidak tersedia.')
+
+            result_candidates.append({
+                "profession_id": pid,
+                "profession_name": c.get('profession_name', 'Unknown'),
+                "display_order": c.get('display_order', 0),
+                "congruence_score": c.get('congruence_score', 0.5),
+                "dimension_content": {
+                    "what_you_love": what_you_love,
+                    "what_you_are_good_at": what_you_are_good_at,
+                    "what_the_world_needs": what_the_world_needs,
+                    "what_you_can_be_paid_for": what_you_can_be_paid_for
+                }
+            })
+            
+        return result_candidates
+
+    # --------------------------------------------------------------------------
+    # PHASE 2: SUBMIT AND SCORE
+    # --------------------------------------------------------------------------
+    async def submit_dimension(
+        self,
+        user: User,
+        session_token: str,
+        dimension_name: str,
+        selected_profession_id: Optional[int],
+        selection_type: str,
+        reasoning_text: str
+    ):
+        session = self.session_repo.get_by_token(self.db, session_token)
+        if not session or session.user_id != user.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+        
+        if session.status != "ikigai_ongoing":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sesi tidak bisa di-submit (bukan ongoing)")
+
+        # check record in ikigai_responses, create if not exist
+        ikigai_resp = self.db.query(IkigaiResponse).filter(IkigaiResponse.test_session_id == session.id).first()
+        if not ikigai_resp:
+            ikigai_resp = IkigaiResponse(test_session_id=session.id)
+            self.db.add(ikigai_resp)
+            self.db.commit()
+            self.db.refresh(ikigai_resp)
+
+        # Build insert json
+        dim_data = {
+            "selected_profession_id": selected_profession_id,
+            "selection_type": selection_type,
+            "reasoning_text": reasoning_text
+        }
+
+        # Update specific dim field
+        if dimension_name == "what_you_love":
+            ikigai_resp.dimension_1_love = dim_data
+        elif dimension_name == "what_you_are_good_at":
+            ikigai_resp.dimension_2_good_at = dim_data
+        elif dimension_name == "what_the_world_needs":
+            ikigai_resp.dimension_3_world_needs = dim_data
+        elif dimension_name == "what_you_can_be_paid_for":
+            ikigai_resp.dimension_4_paid_for = dim_data
+        
+        self.db.commit()
+        
+        # Check completion
+        completed_dims = []
+        if ikigai_resp.dimension_1_love: completed_dims.append("what_you_love")
+        if ikigai_resp.dimension_2_good_at: completed_dims.append("what_you_are_good_at")
+        if ikigai_resp.dimension_3_world_needs: completed_dims.append("what_the_world_needs")
+        if ikigai_resp.dimension_4_paid_for: completed_dims.append("what_you_can_be_paid_for")
+
+        remaining = [d for d in IKIGAI_DIMENSIONS if d not in completed_dims]
+        all_completed = len(remaining) == 0
+
+        if not all_completed:
+            return DimensionSubmitResponse(
+                session_token=session_token,
+                dimension_saved=dimension_name,
+                dimensions_completed=completed_dims,
+                dimensions_remaining=remaining,
+                all_completed=False,
+                message=f"Dimensi {dimension_name} berhasil disimpan."
+            )
+            
+        # ALL COMPLETED -> TRIGGER SCORING
+        try:
+            result = await self._finalize_ikigai(session, ikigai_resp)
+            return result
+        except Exception as e:
+            logger.error("ikigai_finalize_failed", error=str(e))
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"Gagal menghitung skor final: {str(e)}")
+
+    async def _finalize_ikigai(self, session, ikigai_resp: IkigaiResponse):
         start_time = time.time()
         
-        try:
-            # 1. Validate session
-            session = self.session_repo.get_session_by_token(request.session_token)
+        # Lock transaksional & validasi db (already somewhat locked logically)
+        # Fetch Top Candidadtes
+        cache_key = f"ikigai:content:{session.session_token}"
+        cached_data = redis_client.get(cache_key)
+        candidates_with_content = []
+        if cached_data:
+            content = json.loads(cached_data)
+            candidates_with_content = content.get("candidates", [])
             
-            if session.status not in ['riasec_completed', 'ikigai_ongoing']:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid session status for Ikigai: {session.status}. "
-                           "Must complete RIASEC first."
-                )
+        if not candidates_with_content:
+            # Reconstruct fallback if cache expired before submission
+            raw_cands = await self._generate_ikigai_content(session.id)
+            candidates_with_content = raw_cands
             
-            # 2. Get candidate professions from RIASEC results
-            candidates = self._get_profession_candidates(session.id)
-            
-            if not candidates:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No profession candidates found. Complete RIASEC test first."
-                )
-            
-            # 3. Extract essays from request
-            essays = {
-                "love": request.love.text_input,
-                "good_at": request.good_at.text_input,
-                "world_needs": request.world_needs.text_input,
-                "paid_for": request.paid_for.text_input
-            }
-            
-            # 4. Parallel evaluate all professions
-            profession_scores = await self._evaluate_all_professions_parallel(
-                candidates=candidates,
-                essays=essays,
-                clicked_ids=clicked_profession_ids or []
-            )
-            
-            # 5. Sort by total score descending
-            ranked_professions = sorted(
-                profession_scores,
-                key=lambda x: x.total_score,
-                reverse=True
-            )
-            
-            # 6. Calculate evaluation time
-            evaluation_time = time.time() - start_time
-            
-            # 7. Build response
-            response = IkigaiSubmitResponse(
-                session_token=request.session_token,
-                status="ikigai_completed",
-                total_professions_evaluated=len(ranked_professions),
-                evaluation_time_seconds=round(evaluation_time, 2),
-                ranked_professions=ranked_professions,
-                top_recommendation=ranked_professions[0] if ranked_professions else None,
-                summary=self._generate_summary(ranked_professions)
-            )
-            
-            # 8. Update session status (placeholder - save results to DB)
-            # TODO: Save ikigai results to database
-            # self.session_repo.update_session_status(
-            #     session_id=session.id,
-            #     status='ikigai_completed',
-            #     timestamp_field='ikigai_completed_at'
-            # )
-            
-            logger.info(
-                "ikigai_test_completed",
-                session_token=request.session_token,
-                professions_evaluated=len(ranked_professions),
-                evaluation_time=evaluation_time,
-                top_score=ranked_professions[0].total_score if ranked_professions else 0
-            )
-            
-            return response
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(
-                "ikigai_test_failed",
-                session_token=request.session_token,
-                error=str(e)
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to process Ikigai test: {str(e)}"
-            )
-    
-    def _get_profession_candidates(self, session_id: int) -> List[Dict[str, Any]]:
-        """
-        Get profession candidates from RIASEC results
+        # Score per dimensi (4 parallel API calls)
+        answers = {
+            "what_you_love": ikigai_resp.dimension_1_love,
+            "what_you_are_good_at": ikigai_resp.dimension_2_good_at,
+            "what_the_world_needs": ikigai_resp.dimension_3_world_needs,
+            "what_you_can_be_paid_for": ikigai_resp.dimension_4_paid_for
+        }
         
-        Args:
-            session_id: Test session ID
-            
-        Returns:
-            List of profession candidate dictionaries
-        """
-        try:
-            candidates_obj = self.profession_repo.get_candidates_by_session_id(session_id)
-            
-            if not candidates_obj or not candidates_obj.candidates_data:
-                return []
-            
-            # Extract candidates from JSONB data
-            candidates_data = candidates_obj.candidates_data
-            raw_candidates = candidates_data.get('candidates', [])
-            
-            # Enrich with profession details (placeholder)
-            # TODO: Join with digital_professions table for full details
-            enriched = []
-            for i, candidate in enumerate(raw_candidates):
-                enriched.append({
-                    'profession_id': candidate.get('profession_id', i + 1),
-                    'profession_name': candidate.get('profession_name', f'Profession {i + 1}'),
-                    'profession_description': candidate.get('profession_description', ''),
-                    'riasec_code': candidate.get('matched_code', ''),
-                    'riasec_match_score': candidate.get('congruence_score', 0.5),
-                    'path': candidate.get('path'),  # For split-path scenarios
-                })
-            
-            return enriched
-            
-        except Exception as e:
-            logger.warning(
-                "get_candidates_failed",
-                session_id=session_id,
-                error=str(e)
-            )
-            return []
-    
-    async def _evaluate_all_professions_parallel(
-        self,
-        candidates: List[Dict[str, Any]],
-        essays: Dict[str, str],
-        clicked_ids: List[int]
-    ) -> List[ProfessionIkigaiScore]:
-        """
-        Evaluate all professions across all dimensions in parallel
+        dimension_scores_result = {}
         
-        Uses asyncio.gather for maximum concurrency. Instead of
-        O(professions × dimensions) sequential calls, runs them
-        all simultaneously.
-        
-        Args:
-            candidates: List of profession candidates
-            essays: Dict of dimension essays
-            clicked_ids: List of clicked profession IDs
-            
-        Returns:
-            List of ProfessionIkigaiScore objects
-        """
-        # Create all evaluation tasks
+        # Define the parallel tasks
         tasks = []
-        task_mapping = []  # Track which task belongs to which profession/dimension
+        dim_order_for_tasks = []
         
-        for candidate in candidates:
-            for dimension in self.DIMENSIONS:
-                task = self._evaluate_single_dimension(
-                    profession_name=candidate['profession_name'],
-                    profession_description=candidate.get('profession_description', ''),
-                    essay=essays[dimension],
-                    dimension=dimension
-                )
-                tasks.append(task)
-                task_mapping.append({
-                    'candidate': candidate,
-                    'dimension': dimension
-                })
-        
-        logger.info(
-            "starting_parallel_evaluation",
-            total_tasks=len(tasks),
-            professions=len(candidates),
-            dimensions=len(self.DIMENSIONS)
-        )
-        
-        # Execute all tasks in parallel
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # =====================================================================
-        # FAIL-FAST: Check for critical failure rates
-        # =====================================================================
-        total_count = len(results)
-        failed_count = sum(1 for r in results if isinstance(r, Exception))
-        success_count = total_count - failed_count
-        
-        # Calculate failure rate
-        failure_rate = failed_count / total_count if total_count > 0 else 0
-        
-        logger.info(
-            "parallel_evaluation_stats",
-            total_tasks=total_count,
-            successful=success_count,
-            failed=failed_count,
-            failure_rate=f"{failure_rate * 100:.1f}%"
-        )
-        
-        # CRITICAL: If ALL evaluations failed, don't return misleading 0% scores
-        if total_count > 0 and failed_count == total_count:
-            # Get first error for context
-            first_error = next((r for r in results if isinstance(r, Exception)), None)
-            error_message = str(first_error) if first_error else "Unknown error"
-            
-            logger.critical(
-                "all_ai_evaluations_failed",
-                total_failed=failed_count,
-                first_error=error_message,
-                hint="Check AI API credentials, rate limits, or service availability"
-            )
-            
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=(
-                    "AI evaluation service is currently unavailable. "
-                    "All evaluation requests failed. Please try again later. "
-                    f"Error: {error_message[:200]}"
-                )
-            )
-        
-        # WARNING: If most (>80%) evaluations failed, log critical warning
-        # but allow graceful degradation with partial results
-        HIGH_FAILURE_THRESHOLD = 0.8
-        if failure_rate > HIGH_FAILURE_THRESHOLD:
-            first_error = next((r for r in results if isinstance(r, Exception)), None)
-            logger.error(
-                "high_ai_evaluation_failure_rate",
-                failure_rate=f"{failure_rate * 100:.1f}%",
-                failed=failed_count,
-                succeeded=success_count,
-                first_error=str(first_error) if first_error else "Unknown",
-                hint="Partial results returned. Consider investigating AI service issues."
-            )
-        
-        # =====================================================================
-        # Process results and group by profession
-        # =====================================================================
-        profession_results: Dict[int, Dict] = {}
-        
-        for i, result in enumerate(results):
-            mapping = task_mapping[i]
-            candidate = mapping['candidate']
-            dimension = mapping['dimension']
-            prof_id = candidate['profession_id']
-            
-            # Initialize profession entry if needed
-            if prof_id not in profession_results:
-                profession_results[prof_id] = {
-                    'candidate': candidate,
-                    'dimension_scores': {}
-                }
-            
-            # Handle exceptions gracefully (for partial failures)
-            if isinstance(result, Exception):
-                logger.warning(
-                    "dimension_evaluation_failed",
-                    profession_id=prof_id,
-                    dimension=dimension,
-                    error=str(result)
-                )
-                # Use zero scores for failed evaluations
-                result = {
-                    "scores": {"K": 0.0, "S": 0.0, "B": 0.0, "final_dimension_score": 0.0},
-                    "analysis": {"topic_relevance": "Evaluation failed - AI service error"}
-                }
-            
-            # Store dimension result
-            profession_results[prof_id]['dimension_scores'][dimension] = result
-        
-        # Build final ProfessionIkigaiScore objects
-        final_scores = []
-        
-        for prof_id, data in profession_results.items():
-            candidate = data['candidate']
-            dimension_scores = data['dimension_scores']
-            
-            # Build dimension score details
-            dimension_details = {}
-            dimension_finals = []
-            
-            for dim in self.DIMENSIONS:
-                dim_result = dimension_scores.get(dim, {})
-                scores = dim_result.get('scores', {})
-                analysis = dim_result.get('analysis', {})
+        for dim in IKIGAI_DIMENSIONS:
+            ans = answers[dim]
+            if not ans:
+                continue
                 
-                detail = DimensionScoreDetail(
-                    dimension=dim,
-                    K=scores.get('K', 0.0),
-                    S=scores.get('S', 0.0),
-                    B=scores.get('B', 0.0),
-                    final_score=scores.get('final_dimension_score', 0.0),
-                    analysis=analysis.get('topic_relevance', '')
-                )
-                dimension_details[dim] = detail
-                dimension_finals.append(detail.final_score)
+            essay = ans.get("reasoning_text", "")
+            selected_id = ans.get("selected_profession_id")
             
-            # Calculate ikigai average
-            ikigai_avg = sum(dimension_finals) / len(dimension_finals) if dimension_finals else 0.0
+            # Find the profession name and description matching user selection if 'selected'
+            # If 'not_selected', then what to put for profession_name? We provide a generic "other career" or just the first candidate.
+            if ans.get("selection_type") == "selected" and selected_id:
+                prof_data = next((c for c in candidates_with_content if c["profession_id"] == selected_id), None)
+                v_prof_name = prof_data["profession_name"] if prof_data else "Unknown"
+                v_prof_desc = "Deskripsi terpilih"
+            else:
+                v_prof_name = "Karier Eksternal"
+                v_prof_desc = "Pilihan bebas pengguna di luar opsi yang ditawarkan"
+                
+            task = gemini_client.evaluate_ikigai_response(
+                user_essay=essay,
+                profession_name=v_prof_name,
+                profession_description=v_prof_desc,
+                dimension=dim
+            )
+            tasks.append(task)
+            dim_order_for_tasks.append(dim)
             
-            # Calculate click bonus
-            is_clicked = prof_id in clicked_ids
-            ai_confidence = ikigai_avg  # Use ikigai score as confidence
-            click_bonus = calculate_confidence_adjusted_click(is_clicked, ai_confidence)
+        gemini_results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        raw_scores = {}
+        for dim, res in zip(dim_order_for_tasks, gemini_results):
+            if isinstance(res, Exception):
+                logger.error(f"Error calling gemini for {dim}: {str(res)}")
+                val = 0.5 # Fallback
+            else:
+                val = res.get("scores", {}).get("final_dimension_score", 0.5)
+            raw_scores[dim] = val
             
-            # Calculate final total score
-            riasec_score = candidate.get('riasec_match_score', 0.5)
-            total_score = calculate_final_profession_score(
-                riasec_match_score=riasec_score,
-                dimension_scores={dim: dimension_details[dim].final_score for dim in self.DIMENSIONS},
+        # Normalization
+        min_v = min(raw_scores.values())
+        max_v = max(raw_scores.values())
+        norm_scores = {}
+        for dim, v in raw_scores.items():
+            norm_scores[dim] = calculate_min_max_normalization(v, min_v, max_v)
+
+        dimension_scores_result["raw_scores"] = raw_scores
+        dimension_scores_result["normalized_scores"] = norm_scores
+        
+        # Create dimension scores DB entry
+        dim_score_db = IkigaiDimensionScores(
+            test_session_id=session.id,
+            scores_data=dimension_scores_result,
+            ai_model_used="gemini-1.5-flash",
+            total_api_calls=4
+        )
+        self.db.add(dim_score_db)
+
+        # Phase 2 Aggregation
+        total_scores = []
+        for cand in candidates_with_content:
+            pid = cand["profession_id"]
+            c_score = cand["congruence_score"]
+            # calculate score for this cand
+            
+            scores_dim = {}
+            for dim in IKIGAI_DIMENSIONS:
+                ans = answers[dim]
+                sel_id = ans.get("selected_profession_id")
+                # Intrinsic part
+                if ans.get("selection_type") == "selected" and sel_id == pid:
+                    scores_dim[dim] = norm_scores[dim]
+                else:
+                    scores_dim[dim] = 0.0
+
+            # aggregation
+            avg_ai = calculate_ikigai_dimension_average(scores_dim)
+            
+            # extrinsic
+            # Cek click_bonus apakah diklik di manapun (yang mana ya? jika sel_id == pid di setidaknya 1 dim)
+            was_selected_at_least_once = any((answers[d].get("selected_profession_id") == pid and answers[d].get("selection_type") == "selected") for d in IKIGAI_DIMENSIONS)
+            
+            click_bonus = calculate_confidence_adjusted_click(was_selected_at_least_once, avg_ai)
+            
+            final_total = calculate_final_profession_score(
+                riasec_match_score=c_score,
+                # actually function signature in scoring_utils expects dictionary of dimension variables, but avg_ai already handles dim.
+                # Let's adjust based on what was existing.
+                # existing: total_score = (0.5 * riasec) + (0.4 * avg_ikigai) + click_bonus
+                dimension_scores=scores_dim, # We will redefine this if scoring_utils does different
                 click_bonus=click_bonus
             )
             
-            # Build final score object
-            prof_score = ProfessionIkigaiScore(
-                profession_id=prof_id,
-                profession_name=candidate['profession_name'],
-                profession_description=candidate.get('profession_description'),
-                riasec_code=candidate.get('riasec_code'),
-                dimension_scores=dimension_details,
-                ikigai_average_score=round(ikigai_avg, 4),
-                riasec_match_score=round(riasec_score, 4),
-                click_bonus=round(click_bonus, 4),
-                total_score=round(total_score, 4),
-                match_level=get_match_level(total_score),
-                match_percentage=normalize_score_to_percentage(total_score)
+            total_scores.append({
+                "profession_id": pid,
+                "profession_name": cand["profession_name"], # Required for returning breakdown, but don't save excessive data if unneeded
+                "congruence_score": c_score,
+                "intrinsic_score": avg_ai,
+                "extrinsic_score": c_score * 0.5 + click_bonus, # Concept split for tie breaking
+                "total_score": final_total,
+                "score_dimensions": scores_dim
+            })
+            
+        # Sort and Rank
+        # Multilevel Tie-Breaking
+        def tie_break_key(x):
+            return (
+                x["total_score"],
+                x["intrinsic_score"],
+                x["congruence_score"],
+                sum(x["score_dimensions"].values()) / 4 # average normalized score
             )
             
-            final_scores.append(prof_score)
+        total_scores.sort(key=tie_break_key, reverse=True)
         
-        return final_scores
-    
-    async def _evaluate_single_dimension(
-        self,
-        profession_name: str,
-        profession_description: str,
-        essay: str,
-        dimension: str
-    ) -> Dict[str, Any]:
-        """
-        Evaluate a single essay for one profession-dimension pair
-        
-        Args:
-            profession_name: Name of the profession
-            profession_description: Description of the profession
-            essay: User's essay for this dimension
-            dimension: Dimension name (love/good_at/world_needs/paid_for)
+        # Keep track if tie breaking logic was strictly necessary (multiple similar totals)
+        tie_breaking_applied = False
+        if len(total_scores) > 1 and total_scores[0]["total_score"] == total_scores[1]["total_score"]:
+            tie_breaking_applied = True
             
-        Returns:
-            Dict with scores and analysis from AI
-        """
-        try:
-            result = await gemini_client.evaluate_ikigai_response(
-                user_essay=essay,
-                profession_name=profession_name,
-                profession_description=profession_description,
-                dimension=dimension
-            )
-            return result
-        except Exception as e:
-            logger.error(
-                "single_dimension_eval_error",
-                profession=profession_name,
-                dimension=dimension,
-                error=str(e)
-            )
-            raise
-    
-    def _generate_summary(self, ranked_professions: List[ProfessionIkigaiScore]) -> Dict[str, Any]:
-        """
-        Generate summary insights from evaluation results
+        top_1 = total_scores[0]["profession_id"] if total_scores else None
+        top_2 = total_scores[1]["profession_id"] if len(total_scores) > 1 else None
+
+        tot_score_db = IkigaiTotalScores(
+            test_session_id=session.id,
+            scores_data={"professions": total_scores},
+            top_profession_1_id=top_1,
+            top_profession_2_id=top_2
+        )
+        self.db.add(tot_score_db)
         
-        Args:
-            ranked_professions: List of scored professions
+        # update states
+        ikigai_resp.completed = True
+        ikigai_resp.completed_at = datetime.now(timezone.utc)
+        
+        session.status = "completed"
+        session.completed_at = datetime.now(timezone.utc)
+        self.db.commit()
+        
+        # Format response
+        breakdown = []
+        for idx, p in enumerate(total_scores):
+            breakdown.append(ProfessionScoreBreakdown(
+                rank=idx + 1,
+                profession_id=p["profession_id"],
+                total_score=round(p["total_score"], 4),
+                score_what_you_love=round(p["score_dimensions"]["what_you_love"], 4),
+                score_what_you_are_good_at=round(p["score_dimensions"]["what_you_are_good_at"], 4),
+                score_what_the_world_needs=round(p["score_dimensions"]["what_the_world_needs"], 4),
+                score_what_you_can_be_paid_for=round(p["score_dimensions"]["what_you_can_be_paid_for"], 4),
+                intrinsic_score=round(p["intrinsic_score"], 4),
+                extrinsic_score=round(p["extrinsic_score"], 4)
+            ))
             
-        Returns:
-            Dict with summary statistics and insights
-        """
-        if not ranked_professions:
-            return {"message": "No professions evaluated"}
+        return IkigaiCompletionResponse(
+            session_token=session.session_token,
+            status="completed",
+            top_2_professions=breakdown[:2],
+            total_professions_evaluated=len(total_scores),
+            tie_breaking_applied=tie_breaking_applied,
+            calculated_at=datetime.now(timezone.utc).isoformat(),
+            message="Ikigai berhasil di-submit dan diskor."
+        )
+
+    def get_ikigai_result(self, user: User, session_token: str) -> IkigaiCompletionResponse:
+        session = self.session_repo.get_by_token(self.db, session_token)
+        if not session or session.user_id != user.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+            
+        if session.status != "completed":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Ikigai belum selesai.")
+            
+        total_scores = self.db.query(IkigaiTotalScores).filter(IkigaiTotalScores.test_session_id == session.id).first()
+        if not total_scores:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Result tidak ditemukan.")
+            
+        prof_list = total_scores.scores_data.get("professions", [])
         
-        scores = [p.total_score for p in ranked_professions]
-        
-        # Find strongest and weakest dimensions across top profession
-        top_prof = ranked_professions[0]
-        dim_scores = {
-            dim: top_prof.dimension_scores.get(dim, DimensionScoreDetail(
-                dimension=dim, K=0, S=0, B=0, final_score=0
-            )).final_score
-            for dim in self.DIMENSIONS
-        }
-        
-        strongest_dim = max(dim_scores, key=dim_scores.get)
-        weakest_dim = min(dim_scores, key=dim_scores.get)
-        
-        return {
-            "total_evaluated": len(ranked_professions),
-            "average_score": round(sum(scores) / len(scores), 3),
-            "highest_score": round(max(scores), 3),
-            "lowest_score": round(min(scores), 3),
-            "score_spread": round(max(scores) - min(scores), 3),
-            "top_profession": top_prof.profession_name,
-            "top_match_level": top_prof.match_level,
-            "strongest_dimension": strongest_dim,
-            "weakest_dimension": weakest_dim,
-            "recommendation": self._generate_recommendation_text(top_prof, strongest_dim, weakest_dim)
-        }
-    
-    def _generate_recommendation_text(
-        self,
-        top_prof: ProfessionIkigaiScore,
-        strongest_dim: str,
-        weakest_dim: str
-    ) -> str:
-        """Generate human-readable recommendation text"""
-        dim_labels = {
-            "love": "passion",
-            "good_at": "skills",
-            "world_needs": "purpose",
-            "paid_for": "career fit"
-        }
-        
-        return (
-            f"Based on your responses, {top_prof.profession_name} is your strongest match "
-            f"with a {top_prof.match_percentage}% compatibility score. "
-            f"Your {dim_labels.get(strongest_dim, strongest_dim)} alignment is particularly strong. "
-            f"Consider developing your {dim_labels.get(weakest_dim, weakest_dim)} aspects "
-            f"to strengthen this career path."
+        breakdown = []
+        for idx, p in enumerate(prof_list):
+            breakdown.append(ProfessionScoreBreakdown(
+                rank=idx + 1,
+                profession_id=p["profession_id"],
+                total_score=round(p["total_score"], 4),
+                score_what_you_love=round(p["score_dimensions"]["what_you_love"], 4),
+                score_what_you_are_good_at=round(p["score_dimensions"]["what_you_are_good_at"], 4),
+                score_what_the_world_needs=round(p["score_dimensions"]["what_the_world_needs"], 4),
+                score_what_you_can_be_paid_for=round(p["score_dimensions"]["what_you_can_be_paid_for"], 4),
+                intrinsic_score=round(p.get("intrinsic_score", 0), 4),
+                extrinsic_score=round(p.get("extrinsic_score", 0), 4)
+            ))
+            
+        return IkigaiCompletionResponse(
+            session_token=session.session_token,
+            status="completed",
+            top_2_professions=breakdown[:2],
+            total_professions_evaluated=len(prof_list),
+            tie_breaking_applied=False, # Optional since this is just a read
+            calculated_at=total_scores.calculated_at.isoformat(),
+            message="Berhasil mengambil hasil Ikigai."
         )

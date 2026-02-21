@@ -209,6 +209,97 @@ class GeminiFlashClient:
                 },
                 "error": str(e)
             }
+
+    async def generate_ikigai_content(
+        self,
+        profession_contexts: list[Dict[str, Any]]
+    ) -> list[Dict[str, Any]]:
+        """
+        Generate Ikigai dimensions content for multiple professions in a single batch call.
+        """
+        def format_salary(path_info):
+            if not path_info or not isinstance(path_info, dict):
+                return '-'
+            min_sal = path_info.get('salary_min', 0)
+            max_sal = path_info.get('salary_max', 0)
+            if min_sal == 0 and max_sal == 0:
+                return '-'
+            return f"Rp {min_sal//1000000} - {max_sal//1000000} juta/bulan"
+
+        professions_block = ""
+        for i, prof in enumerate(profession_contexts):
+            professions_block += f"""
+---
+PROFESI {i+1}: {prof.get('name')} (ID: {prof.get('profession_id')})
+Kode RIASEC: {prof.get('riasec_code')} ({prof.get('riasec_title')})
+Deskripsi: {prof.get('about_description') or 'Tidak tersedia'}
+Kecocokan Kepribadian: {prof.get('riasec_description') or 'Tidak tersedia'}
+Aktivitas: {', '.join(prof.get('activities', [])[:5]) if prof.get('activities') else 'Tidak tersedia'}
+Hard Skill: {', '.join(prof.get('hard_skills_required', [])[:5]) if prof.get('hard_skills_required') else 'Tidak tersedia'}
+Soft Skill: {', '.join(prof.get('soft_skills_required', [])[:3]) if prof.get('soft_skills_required') else 'Tidak tersedia'}
+Tools: {', '.join(prof.get('tools_required', [])[:4]) if prof.get('tools_required') else 'Tidak tersedia'}
+Pasar Kerja: {', '.join(prof.get('market_insights', [])[:2]) if prof.get('market_insights') else 'Tidak tersedia'}
+Gaji Entry: {format_salary(prof.get('entry_level_path'))}
+Potensi Senior: {prof.get('senior_level_path', {}).get('title', '-')} — {format_salary(prof.get('senior_level_path'))}
+"""
+
+        system_prompt = f"""Kamu adalah sistem backend penghasil konten tes karier.
+
+Di bawah ini terdapat {len(profession_contexts)} profesi. Untuk setiap profesi,
+hasilkan narasi 4 dimensi Ikigai (masing-masing tepat 2 kalimat).
+
+[DAFTAR PROFESI]
+{professions_block}
+
+[ATURAN OUTPUT]
+- Kembalikan HANYA JSON array valid
+- Setiap item memiliki: profession_id, what_you_love, what_you_are_good_at,
+  what_the_world_needs, what_you_can_be_paid_for
+- Tiap narasi: 2 kalimat, 25–40 kata, Bahasa Indonesia
+- Gunakan "kamu", jangan sebut nama profesi atau nama jabatan eksplisit
+- Tidak ada teks tambahan sebelum/sesudah JSON
+
+[FORMAT OUTPUT]
+[
+  {{
+    "profession_id": <int>,
+    "what_you_love": "...",
+    "what_you_are_good_at": "...",
+    "what_the_world_needs": "...",
+    "what_you_can_be_paid_for": "..."
+  }},
+  ...
+]"""
+
+        messages = [
+            {"role": "user", "content": system_prompt}
+        ]
+        
+        try:
+            raw_response = await self.chat_completion(
+                messages=messages,
+                max_tokens=2500,
+                temperature=0.3,
+                dimension="ikigai_content_generation"
+            )
+            
+            cleaned = self._clean_json_response(raw_response)
+            parsed = json.loads(cleaned)
+            
+            # Ensure it's a list
+            if not isinstance(parsed, list):
+                logger.error("ikigai_content_json_parse_error", error="Response is not a JSON array")
+                return []
+            
+            return parsed
+            
+        except Exception as e:
+            logger.error(
+                "ikigai_content_generation_failed",
+                error=str(e)
+            )
+            return []
+
     
     async def evaluate_ikigai_response(
         self,

@@ -1,65 +1,77 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, field_validator
 from typing import List, Optional
+from datetime import datetime
 
-class QuestionSchema(BaseModel):
+class RIASECAnswerItem(BaseModel):
     question_id: int
-    question_text: str
-    riasec_type: str  # R, I, A, S, E, or C
+    question_type: str       # "R", "I", "A", "S", "E", atau "C"
+    answer_value: int        # 1 (Sangat Tidak Setuju) - 5 (Sangat Setuju)
+    answered_at: datetime    # Waktu user menjawab soal ini (untuk analytics)
 
-class RIASECSubmitRequest(BaseModel):
-    """Request schema for submitting RIASEC test"""
-    session_token: str = Field(..., description="Session token")
-    responses: List[RIASECAnswerItem] = Field(..., min_items=72, max_items=72)
-    
-    @validator('responses')
-    def validate_responses_count(cls, v):
-        if len(v) != 72:
-            raise ValueError('Must provide exactly 72 responses (12 per RIASEC type)')
-        
-        # Score harus 1-5
-        for question_id, score in v.items():
-            if not (1 <= score <= 5):
-                raise ValueError(f"Score for question {question_id} must be between 1-5")
-        
+    @field_validator("answer_value")
+    def validate_answer(cls, v):
+        if not (1 <= v <= 5):
+            raise ValueError("answer_value harus antara 1 dan 5")
         return v
 
-# Response
-class QuestionSetResponse(BaseModel):
-    question_ids: List[int]  # 72 IDs
-    questions: List[dict]     # Full question data
+    @field_validator("question_type")
+    def validate_question_type(cls, v):
+        if v not in {"R", "I", "A", "S", "E", "C"}:
+            raise ValueError(f"question_type tidak valid: {v}")
+        return v
 
-class RIASECScoreDetail(BaseModel):
-    score_r: int
-    score_i: int
-    score_a: int
-    score_s: int
-    score_e: int
-    score_c: int
 
-class RIASECResultResponse(BaseModel):
-    # session_token: str
-    riasec_code: str  # e.g. "RIA"
-    riasec_title: str
-    riasec_scores: dict[str, int]  # {"R": 42, "I": 38, ...}
-    classification_type: str  # "single", "dual", "triple"
-    top_3_codes: list[str]  # ["R", "I", "A"]
-    code_details: RIASECCodeSchema
-
-class RIASECResultResponse(BaseModel):
+class RIASECSubmitRequest(BaseModel):
     session_token: str
-    status: str
-    scores: Dict[str, int]
-    code_info: Dict[str, Any]
-    classification_type: str
+    responses: List[RIASECAnswerItem]  # Harus tepat 72 item (12 soal × 6 tipe)
+
+    @field_validator("responses")
+    def validate_response_count(cls, v):
+        if len(v) != 72:
+            raise ValueError(f"Harus ada tepat 72 jawaban (12 per tipe RIASEC), diterima {len(v)}")
+        return v
+
+
+class RIASECScores(BaseModel):
+    R: int
+    I: int
+    A: int
+    S: int
+    E: int
+    C: int
+
+
+class RIASECCodeInfo(BaseModel):
+    riasec_code: str
+    riasec_title: str
+    riasec_description: Optional[str]
+    strengths: List[str]
+    challenges: List[str]
+    strategies: List[str]
+    work_environments: List[str]
+    interaction_styles: List[str]
+
+
+class CandidateProfessionItem(BaseModel):
+    profession_id: int
+    riasec_code_id: int
+    expansion_tier: int          # 1=Exact, 2=Kongruen, 3=Subset, 4=Dominan
+    congruence_type: str         # "exact_match", "congruent_permutation", dll
+    congruence_score: float      # 0.0-1.0
+    display_order: int           # Urutan untuk UI. Top 3-5 yang ditampilkan sebagai opsi Ikigai
+    path: Optional[str] = None   # "A" atau "B" — hanya ada jika is_inconsistent_profile=True
+
+
+class RIASECSubmitResponse(BaseModel):
+    session_token: str
+    test_goal: str
+    status: str                             # "riasec_completed"
+    scores: RIASECScores
+    classification_type: str               # "single" / "dual" / "triple"
     is_inconsistent_profile: bool
-    candidates_summary: Dict[str, Any]
-    
-class CandidatesResponse(BaseModel):
-    """Response schema for candidates list"""
-    user_riasec_code: str
-    user_top_3_types: List[str]
-    user_scores: Dict[str, int]
-    is_inconsistent_profile: bool = False  # NEW: Flag for Split-Path results
-    candidates: List[Dict[str, Any]]  # Each candidate may have optional "path": "A"|"B"
-    expansion_summary: Dict[str, Any]
+    riasec_code_info: RIASECCodeInfo
+    candidates: List[CandidateProfessionItem]
     total_candidates: int
+    display_candidates_count: int          # Jumlah profesi yang ditampilkan sebagai opsi UI
+    validity_warning: Optional[str] = None # Peringatan jika skor rendah
+    next_step: str                          # "ikigai" atau "fit_check_result"

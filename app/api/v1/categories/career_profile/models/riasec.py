@@ -1,40 +1,88 @@
 # app/api/v1/categories/career_profile/models/riasec.py
-from sqlalchemy import Column, BigInteger, String, JSON, TIMESTAMP, ForeignKey, text, CheckConstraint, Boolean, Integer
+from sqlalchemy import (
+    Column, BigInteger, String, Boolean, Integer,
+    ForeignKey, Index, CheckConstraint
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.sql import func
+from sqlalchemy import TIMESTAMP
 from app.db.base import Base
 
+
 class RIASECCode(Base):
+    """Master data 156 kode RIASEC (6 single + 30 dual + 120 triple). Di-seed via scripts."""
     __tablename__ = "riasec_codes"
-    
+
     id = Column(BigInteger, primary_key=True)
-    riasec_code = Column(String(10), unique=True, nullable=False)
-    riasec_title = Column(String(200))
-    riasec_description = Column(String(1000))
-    # Kolom JSONB
-    strengths = Column(JSON, server_default=text("'[]'::jsonb"))
-    challenges = Column(JSON, server_default=text("'[]'::jsonb"))
-    strategies = Column(JSON, server_default=text("'[]'::jsonb"))
-    work_environments = Column(JSON, server_default=text("'[]'::jsonb"))
-    interaction_styles = Column(JSON, server_default=text("'[]'::jsonb"))
-    congruent_code_ids = Column(JSON, server_default=text("'[]'::jsonb"))
-    
-    created_at = Column(TIMESTAMP, server_default=text("now()"))
-    updated_at = Column(TIMESTAMP, server_default=text("now()"), onupdate=text("now()"))
+    riasec_code = Column(String(3), unique=True, nullable=False)
+    riasec_title = Column(String(255), nullable=False)
+    riasec_description = Column(String, nullable=True)
+    strengths = Column(JSONB, server_default="'[]'")
+    challenges = Column(JSONB, server_default="'[]'")
+    strategies = Column(JSONB, server_default="'[]'")
+    work_environments = Column(JSONB, server_default="'[]'")
+    interaction_styles = Column(JSONB, server_default="'[]'")
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
 
 class RIASECQuestionSet(Base):
+    """
+    Menyimpan urutan 12 ID soal yang di-generate untuk satu sesi.
+    PERBAIKAN: kolom ini hanya berisi question_ids (JSONB array), bukan skor.
+    Skor ada di riasec_results, bukan di sini.
+    """
     __tablename__ = "riasec_question_sets"
-    
-    id = Column(BigInteger, primary_key=True)
 
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
     test_session_id = Column(
         BigInteger,
-        ForeignKey(
-            "careerprofile_test_sessions.id",
-            ondelete="CASCADE"
-        ),
+        ForeignKey("careerprofile_test_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True   # One-to-one dengan session
+    )
+    # Array 72 integer, contoh: [15, 23, 8, 45, 67, 2, 38, 51, 12, 60, 19, 44, ...]
+    # (72 soal total = 12 soal × 6 tipe, diacak urutannya — bukan dikelompokkan per tipe)
+    # Urutan array = urutan tampil soal ke user
+    question_ids = Column(JSONB, nullable=False)
+    generated_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+class RIASECResponse(Base):
+    """
+    Menyimpan semua 72 jawaban user dalam satu baris JSONB.
+    INSERT sekali saat user submit, tidak ada update bertahap.
+    One-to-one dengan session.
+    """
+    __tablename__ = "riasec_responses"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    test_session_id = Column(
+        BigInteger,
+        ForeignKey("careerprofile_test_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True   # Satu baris per sesi, tidak boleh double insert
+    )
+    # Format: {"responses": [...72 items...], "total_questions": 72, "completed": true, "submitted_at": "..."}
+    responses_data = Column(JSONB, nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+class RIASECResult(Base):
+    """
+    Menyimpan hasil akhir klasifikasi RIASEC.
+    One-to-one dengan session.
+    """
+    __tablename__ = "riasec_results"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    test_session_id = Column(
+        BigInteger,
+        ForeignKey("careerprofile_test_sessions.id", ondelete="CASCADE"),
         nullable=False,
         unique=True
     )
 
+    # Skor mentah per tipe (range 12-60: 12 soal × nilai 1-5)
     score_r = Column(Integer, nullable=False)
     score_i = Column(Integer, nullable=False)
     score_a = Column(Integer, nullable=False)
@@ -42,65 +90,21 @@ class RIASECQuestionSet(Base):
     score_e = Column(Integer, nullable=False)
     score_c = Column(Integer, nullable=False)
 
+    # Hasil klasifikasi
     riasec_code_id = Column(
         BigInteger,
         ForeignKey("riasec_codes.id", ondelete="RESTRICT"),
         nullable=False
     )
+    riasec_code_type = Column(String(20), nullable=False)  # "single" / "dual" / "triple"
+    is_inconsistent_profile = Column(Boolean, default=False, nullable=False)
 
-    classification_type = Column(String(20), nullable=False)
-    is_inconsistent_profile = Column(Boolean, default=False)
-
-    calculated_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    # session = relationship(
-    #     "CareerProfileTestSession",
-    #     back_populates="result"
-    # )
-
-    riasec_code = relationship(
-        "RIASECCode",
-        back_populates="results"
-    )
+    calculated_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
     __table_args__ = (
         CheckConstraint(
-            "score_r BETWEEN 0 AND 100 AND "
-            "score_i BETWEEN 0 AND 100 AND "
-            "score_a BETWEEN 0 AND 100 AND "
-            "score_s BETWEEN 0 AND 100 AND "
-            "score_e BETWEEN 0 AND 100 AND "
-            "score_c BETWEEN 0 AND 100",
-            name="chk_riasec_results_scores"
+            "riasec_code_type IN ('single', 'dual', 'triple')",
+            name="chk_riasec_results_classification_type"
         ),
-        CheckConstraint(
-            "classification_type IN ('single', 'dual', 'triple')",
-            name="chk_riasec_results_classification"
-        ),
+        Index("idx_riasec_results_session", "test_session_id"),
     )
-
-class RIASECResponse(Base):
-    __tablename__ = "riasec_responses"
-    
-    id = Column(BigInteger, primary_key=True)
-    test_session_id = Column(BigInteger, ForeignKey("careerprofile_test_sessions.id"))
-    question_set_id = Column(BigInteger, ForeignKey("riasec_question_sets.id"))
-    responses_data = Column(JSON)  # {"1": 4, "2": 5, ...}
-    created_at = Column(TIMESTAMP, server_default=text("now()"))
-
-class RIASECResult(Base):
-    __tablename__ = "riasec_results"
-    
-    id = Column(BigInteger, primary_key=True)
-    test_session_id = Column(BigInteger, ForeignKey("careerprofile_test_sessions.id"), unique=True)
-    
-    score_r = Column(Integer, default=0)
-    score_i = Column(Integer, default=0)
-    score_a = Column(Integer, default=0)
-    score_s = Column(Integer, default=0)
-    score_e = Column(Integer, default=0)
-    score_c = Column(Integer, default=0)
-    
-    riasec_code_id = Column(BigInteger, ForeignKey("riasec_codes.id"))
-    riasec_code_type = Column(String(20))  # "single", "dual", "triple"
-    calculated_at = Column(TIMESTAMP, server_default=text("now()"))

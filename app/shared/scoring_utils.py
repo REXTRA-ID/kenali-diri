@@ -13,6 +13,17 @@ Key Concepts:
 
 from typing import Optional
 
+def calculate_min_max_normalization(value: float, min_val: float, max_val: float) -> float:
+    """Normalize a value using min-max scaling."""
+    if max_val == min_val:
+        return 0.5
+    return (value - min_val) / (max_val - min_val)
+
+def calculate_ikigai_dimension_average(scores_dim: dict) -> float:
+    """Calculate average of Ikigai dimensions."""
+    if not scores_dim:
+        return 0.0
+    return sum(scores_dim.values()) / len(scores_dim)
 
 def calculate_confidence_adjusted_click(
     is_clicked: bool,

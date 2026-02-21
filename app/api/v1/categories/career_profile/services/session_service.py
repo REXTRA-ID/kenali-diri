@@ -1,66 +1,161 @@
-from sqlalchemy.orm import Session
-from app.api.v1.categories.career_profile.repositories.session_repo import SessionRepository
-from app.api.v1.categories.career_profile.repositories.riasec_repo import RIASECRepository
-from app.api.v1.categories.career_profile.models.riasec import RIASECQuestionSet
-from sqlalchemy.orm import Session
-from app.api.v1.general.repositories.history_repo import HistoryRepository
 import uuid
+import random
+from datetime import datetime
+from sqlalchemy.orm import Session
+from fastapi import HTTPException, status
+
+from app.db.models.user import User
+from app.api.v1.categories.career_profile.models.session import CareerProfileTestSession
+from app.api.v1.categories.career_profile.models.riasec import RIASECQuestionSet
+from app.db.models.kenalidiri_history import KenaliDiriHistory
+from app.api.v1.dependencies.token import check_and_deduct_token
+
+# ID kategori "Tes Profil Karier" di tabel kenalidiri_categories
+# category_code = CAREER_PROFILE, id = 1 (sesuai seed data)
+CAREER_PROFILE_CATEGORY_ID = 1
 
 class SessionService:
     def __init__(self, db: Session):
         self.db = db
-        self.session_repo = SessionRepository(db)
-        self.history_repo = HistoryRepository()
 
-    def create_new_session(self, user_id: uuid.UUID):
+    def start_session(
+        self,
+        user: User,
+        persona_type: str,
+        test_goal: str,
+        uses_ikigai: bool,
+        target_profession_id: int | None
+    ) -> dict:
         """
-        Create new test session:
-        1. Create careerprofile_test_sessions record
-        2. Create kenalidiri_history record
-        3. Load and generate RIASEC question set
-        4. Return token + questions
-        """
-        # 1. Create test session
-        session = self.session_repo.create(user_id)
-
-        # 2. Create kenalidiri_history (status "ongoing")
-        # Assume category_id = 1 for Career Profile
-        self.history_repo.create(
-            self.db,
-            user_id=user_id,
-            category_id=1,
-            detail_session_id=session.id
-        )
-
-        # 3. Create RIASEC question set
-        from app.api.v1.categories.career_profile.services.riasec_service import RIASECService
-        riasec_service = RIASECService(self.db)
-        question_ids = riasec_service.generate_question_set(session.session_token)
+        Setup lengkap sesi tes baru dalam satu transaksi:
+        1. Potong token (hanya RECOMMENDATION)
+        2. INSERT careerprofile_test_sessions
+        3. INSERT kenalidiri_history
+        4. Generate & INSERT riasec_question_sets
+        5. Return session_token + question_ids ke Flutter
         
-        # Save question set to DB
-        riasec_service.riasec_repo.create_question_set(session.id, question_ids)
+        Seluruh langkah di atas atomik — jika salah satu gagal,
+        semua di-rollback termasuk potongan token.
+        """
+        try:
+            # === STEP 1: Token check (hanya RECOMMENDATION) ===
+            if test_goal == "RECOMMENDATION":
+                check_and_deduct_token(
+                    user=user,
+                    db=self.db,
+                    amount=3,
+                    description="Pemakaian Tes Profil Karier — Rekomendasi Profesi"
+                )
 
-        # 4. Return response
-        return {
-            "session_token": session.session_token,
-            "status": session.status,
-            "started_at": session.started_at
+            # === STEP 2: INSERT careerprofile_test_sessions ===
+            session_token = str(uuid.uuid4())
+
+            new_session = CareerProfileTestSession(
+                user_id=user.id,
+                session_token=session_token,
+                persona_type=persona_type,
+                test_goal=test_goal,
+                target_profession_id=target_profession_id,
+                uses_ikigai=uses_ikigai,
+                status="riasec_ongoing",
+                algorithm_version="1.0",
+                question_set_version="1.0"
+            )
+            self.db.add(new_session)
+            self.db.flush()  # Dapatkan ID tanpa commit dulu
+
+            # === STEP 3: INSERT kenalidiri_history ===
+            history_entry = KenaliDiriHistory(
+                user_id=user.id,
+                test_category_id=CAREER_PROFILE_CATEGORY_ID,
+                detail_session_id=new_session.id,
+                status="ongoing"
+            )
+            self.db.add(history_entry)
+
+            # === STEP 4: Generate urutan soal & INSERT riasec_question_sets ===
+            question_ids = self._generate_question_ids(session_token)
+
+            question_set = RIASECQuestionSet(
+                test_session_id=new_session.id,
+                question_ids=question_ids,
+            )
+            self.db.add(question_set)
+
+            # === STEP 5: Commit semua sekaligus (atomik) ===
+            self.db.commit()
+
+            return {
+                "session_token": session_token,
+                "test_goal": test_goal,
+                "status": "riasec_ongoing",
+                "question_ids": question_ids,
+                "total_questions": len(question_ids),
+                "message": (
+                    "Sesi tes berhasil dibuat. "
+                    "Tampilkan 72 soal ke user sesuai urutan question_ids yang diterima. "
+                    "Flutter yang handle pembagian per halaman."
+                )
+            }
+
+        except HTTPException:
+            self.db.rollback()
+            raise
+        except Exception as e:
+            self.db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Gagal membuat sesi tes: {str(e)}"
+            )
+
+    def _generate_question_ids(self, session_token: str) -> list[int]:
+        """
+        Generate urutan 72 ID soal (12 soal per tipe RIASEC), diacak urutannya.
+        
+        Seed dari session_token agar urutan tetap konsisten kalau user refresh.
+        Dengan seed yang sama, urutan selalu identik.
+        
+        Struktur riasec_questions.json (72 soal total):
+        - ID 1-12   → tipe R (Realistic)
+        - ID 13-24  → tipe I (Investigative)
+        - ID 25-36  → tipe A (Artistic)
+        - ID 37-48  → tipe S (Social)
+        - ID 49-60  → tipe E (Enterprising)
+        - ID 61-72  → tipe C (Conventional)
+        
+        Semua 72 soal diambil, lalu diacak urutannya (tidak dikelompokkan per tipe).
+        Flutter yang handle pembagian per halaman dari 72 soal ini.
+        
+        Contoh output: [15, 23, 8, 45, 67, 2, 38, 51, 12, 60, 19, 44, ...]
+        Urutan inilah yang dikirim ke Flutter untuk ditampilkan ke user.
+        """
+        random.seed(session_token)
+
+        type_ranges = {
+            "R": list(range(1, 13)),
+            "I": list(range(13, 25)),
+            "A": list(range(25, 37)),
+            "S": list(range(37, 49)),
+            "E": list(range(49, 61)),
+            "C": list(range(61, 73)),
         }
-        
-    def get_session_by_token(self, db: Session, token: str):
-        return self.session_repo.get_by_token(db, token)
 
-    def get_progress(self, session_id: int):
-        """Get session progress info"""
-        session = self.session_repo.get_by_id(session_id)
+        # Ambil SEMUA 72 soal (12 per tipe), bukan sample
+        all_questions = []
+        for riasec_type, pool in type_ranges.items():
+            all_questions.extend(pool)
 
+        # Acak urutan tampil (bukan dikelompokkan per tipe)
+        random.shuffle(all_questions)
+        return all_questions
+
+    def get_session_by_token(self, session_token: str) -> CareerProfileTestSession:
+        session = self.db.query(CareerProfileTestSession).filter(
+            CareerProfileTestSession.session_token == session_token
+        ).first()
         if not session:
-            return None
-
-        return {
-            "session_token": str(session.session_token),
-            "current_phase": session.status,
-            "riasec_completed_at": session.riasec_completed_at,
-            "ikigai_completed_at": session.ikigai_completed_at,
-            "can_proceed_to_ikigai": session.riasec_completed_at is not None
-        }
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session token tidak valid atau tidak ditemukan"
+            )
+        return session

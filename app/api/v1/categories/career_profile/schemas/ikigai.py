@@ -16,6 +16,9 @@ from datetime import datetime
 
 # ============== REQUEST SCHEMAS ==============
 
+class StartIkigaiRequest(BaseModel):
+    session_token: str
+
 class IkigaiDimensionInput(BaseModel):
     """Input for a single Ikigai dimension"""
     text_input: str = Field(
@@ -192,3 +195,96 @@ class IkigaiResultResponse(BaseModel):
     completed_at: Optional[datetime] = None
     ranked_professions: List[ProfessionIkigaiScore]
     top_recommendation: Optional[ProfessionIkigaiScore] = None
+
+
+class SubmitDimensionRequest(BaseModel):
+    session_token: str
+    dimension_name: str          # "what_you_love" | "what_you_are_good_at" |
+                                 # "what_the_world_needs" | "what_you_can_be_paid_for"
+    selected_profession_id: Optional[int] = None
+    selection_type: str          # "selected" | "not_selected"
+    reasoning_text: str
+
+    @validator("dimension_name")
+    def validate_dimension(cls, v):
+        valid = {"what_you_love", "what_you_are_good_at", "what_the_world_needs", "what_you_can_be_paid_for"}
+        if v not in valid:
+            raise ValueError(f"dimension_name tidak valid. Pilih dari: {valid}")
+        return v
+
+    @validator("selection_type")
+    def validate_selection_type(cls, v):
+        if v not in {"selected", "not_selected"}:
+            raise ValueError("selection_type harus 'selected' atau 'not_selected'")
+        return v
+
+    @validator("reasoning_text")
+    def validate_reasoning(cls, v):
+        if len(v.strip()) < 10:
+            raise ValueError("reasoning_text minimal 10 karakter")
+        return v.strip()
+
+    def validate_consistency(self):
+        """Validasi konsistensi selected_profession_id dan selection_type."""
+        if self.selected_profession_id is not None and self.selection_type != "selected":
+            raise ValueError("Jika selected_profession_id diisi, selection_type harus 'selected'")
+        if self.selected_profession_id is None and self.selection_type != "not_selected":
+            raise ValueError("Jika selected_profession_id null, selection_type harus 'not_selected'")
+
+
+class DimensionSubmitResponse(BaseModel):
+    """Response untuk submit dimensi yang bukan dimensi ke-4 (belum selesai)."""
+    session_token: str
+    dimension_saved: str         # nama dimensi yang baru disimpan
+    dimensions_completed: List[str]
+    dimensions_remaining: List[str]
+    all_completed: bool          # False jika masih ada dimensi yang belum dijawab
+    message: str
+
+
+class ProfessionScoreBreakdown(BaseModel):
+    rank: int
+    profession_id: int
+    total_score: float
+    score_what_you_love: float
+    score_what_you_are_good_at: float
+    score_what_the_world_needs: float
+    score_what_you_can_be_paid_for: float
+    intrinsic_score: float
+    extrinsic_score: float
+
+
+class IkigaiCompletionResponse(BaseModel):
+    """Response setelah dimensi ke-4 selesai dan scoring selesai."""
+    session_token: str
+    status: str                              # "completed"
+    top_2_professions: List[ProfessionScoreBreakdown]
+    total_professions_evaluated: int
+    tie_breaking_applied: bool
+    calculated_at: str                       # ISO8601
+    message: str
+
+
+class DimensionContent(BaseModel):
+    what_you_love: str
+    what_you_are_good_at: str
+    what_the_world_needs: str
+    what_you_can_be_paid_for: str
+
+
+class CandidateWithContent(BaseModel):
+    profession_id: int
+    profession_name: str
+    display_order: int
+    congruence_score: float
+    dimension_content: DimensionContent
+
+
+class IkigaiContentResponse(BaseModel):
+    session_token: str
+    status: str
+    generated_at: str
+    regenerated: bool
+    total_display_candidates: int
+    message: str
+    candidates_with_content: List[CandidateWithContent]

@@ -11,3 +11,5 @@ venv/
 .todo
 *:Zone.Identifier
 *.txt
+GEMINI.md
+TODO.md

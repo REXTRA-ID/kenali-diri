@@ -1,370 +1,853 @@
-from app.api.v1.categories.career_profile.repositories.riasec_repo import RIASECRepository
-from app.api.v1.categories.career_profile.repositories.session_repo import SessionRepository
-from app.api.v1.categories.career_profile.utils.constants import QUESTION_TYPE_MAP
-from app.api.v1.categories.career_profile.utils.classification import classify_riasec_code
+# app/api/v1/categories/career_profile/services/riasec_service.py
+"""
+RIASEC Service — Ditulis Ulang
 
-class RIASECService:
-    def __init__(self):
-        self.riasec_repo = RIASECRepository()
-        self.session_repo = SessionRepository()
-        
-    def submit_and_calculate(self, db, session_id: int, responses: dict):
-        """
-        Submit RIASEC responses dan calculate scores:
-        1. Validate 72 responses
-        2. Calculate raw scores (R, I, A, S, E, C)
-        3. Classify RIASEC code
-        4. Save responses_data ke riasec_responses
-        5. Save result ke riasec_results (dengan kolom score_r, score_i, dsb)
-        6. Update session: riasec_completed = TRUE
-        """
-        # 1. Validate
-        if len(responses) != 72:
-            raise ValueError("Must have exactly 72 responses")
+Mencakup:
+1. Kalkulasi skor mentah (raw sum, bukan rata-rata)
+2. Klasifikasi kode RIASEC LENGKAP (semua kondisi, bridge table, tie-breaker)
+3. Validasi profil (low overall, severe low, invalid)
+4. Lookup detail kode dari database
+5. Ekspansi kandidat profesi (4-tier + Split-Path untuk profil inkonsisten)
+6. Penyimpanan ke semua tabel
+"""
+from typing import Dict, List, Tuple, Optional, Any, Set
+from itertools import permutations, combinations
+from sqlalchemy.orm import Session
+from fastapi import HTTPException, status
+from datetime import datetime
 
-        # 2. Calculate raw scores
-        scores = {"R": 0, "I": 0, "A": 0, "S": 0, "E": 0, "C": 0}
+from app.api.v1.categories.career_profile.models.session import CareerProfileTestSession
+from app.api.v1.categories.career_profile.models.riasec import (
+    RIASECQuestionSet, RIASECResponse, RIASECResult, RIASECCode
+)
+from app.api.v1.categories.career_profile.models.profession import IkigaiCandidateProfession
+from app.api.v1.categories.career_profile.repositories.profession_repo import ProfessionRepository
+from app.api.v1.categories.career_profile.schemas.riasec import RIASECAnswerItem
+from app.db.models.user import User
 
-        for question_id_str, score in responses.items():
-            question_id = int(question_id_str)
-            riasec_type = QUESTION_TYPE_MAP.get(question_id)
-            if not riasec_type:
-                raise ValueError(f"Question ID {question_id} not mapped to any RIASEC type")
-            scores[riasec_type] += score
 
-        # 3. Classify RIASEC code
-        riasec_code, code_type = classify_riasec_code(scores)
+# ============================================================
+# KONSTANTA HEKSAGON HOLLAND
+# ============================================================
 
-        # 4. Query riasec_codes table untuk detail (deskripsi, title, dll)
-        code_detail = self.riasec_repo.get_code_by_code(db, riasec_code)
+# Pasangan opposite (berseberangan di heksagon)
+OPPOSITE_PAIRS: Set[Tuple[str, str]] = {
+    ("R", "S"), ("S", "R"),
+    ("I", "E"), ("E", "I"),
+    ("A", "C"), ("C", "A")
+}
 
-class RIASECService:
-    """Service for RIASEC test logic and calculations"""
+# Tipe adjacent (bersebelahan di heksagon)
+ADJACENT_MAP: Dict[str, List[str]] = {
+    "R": ["I", "C"],
+    "I": ["R", "A"],
+    "A": ["I", "S"],
+    "S": ["A", "E"],
+    "E": ["S", "C"],
+    "C": ["E", "R"]
+}
+
+# Urutan default untuk tie-breaker
+RIASEC_DEFAULT_ORDER = ["R", "I", "A", "S", "E", "C"]
+
+
+# ============================================================
+# FUNGSI HELPER (Bisa diuji unit secara independen)
+# ============================================================
+
+def sort_scores(scores: Dict[str, int]) -> List[Tuple[str, int]]:
+    """
+    Urutkan skor descending.
     
-    # Singleton pattern for questions cache
-    _questions_cache: Optional[Dict[int, Any]] = None
+    Tie-breaker hierarki (sesuai PDF):
+    1. Skor kompetensi user (jika tersedia dari data tambahan)
+    2. Urutan default R-I-A-S-E-C sebagai fallback final
     
-    def __init__(self, db: Session):
-        self.db = db
-        self.session_repo = SessionRepository(db)
-        self.riasec_repo = RIASECRepository(db)
-        self.profession_service = ProfessionExpansionService(db)
+    CATATAN IMPLEMENTASI:
+    Saat ini hanya menggunakan tie-breaker urutan default (langkah 2).
+    Jika ke depan data skor kompetensi tersedia (misal dari asesmen tambahan),
+    tambahkan parameter `competency_scores: Dict[str, int] = None` dan
+    gunakan sebagai primary tie-breaker sebelum urutan default.
     
-    @classmethod
-    def load_questions_data(cls) -> Dict[int, Any]:
-        """
-        Load RIASEC questions from JSON file (cached)
-        
-        Returns:
-            Dict mapping question_id to question data
-        """
-        if cls._questions_cache is None:
-            questions_path = Path("data/riasec_questions.json")
-            
-            if not questions_path.exists():
-                raise FileNotFoundError(
-                    f"RIASEC questions file not found at {questions_path}"
-                )
-            
-            questions_list = load_riasec_questions(questions_path)
-            
-            cls._questions_cache = {
-                q['question_id']: q for q in questions_list
-            } 
-        
-        return cls._questions_cache
+    Untuk mayoritas kasus praktis, tie-breaker urutan default sudah cukup
+    karena tie exact antar tipe sangat jarang terjadi.
     
-    def generate_question_set(self, session_token: str) -> List[int]:
-        """
-        Generate all 72 questions (12 per RIASEC type)
-        
-        Args:
-            session_token: Session token for random seed (used for shuffling order)
-            
-        Returns:
-            List of 72 question IDs (all questions, shuffled)
-        """
-        # Seed random with session token
-        random.seed(session_token)
-        
-        # Question ID ranges per type (72 total: 12 per type)
-        question_ranges = {
-            'R': list(range(1, 13)),
-            'I': list(range(13, 25)),
-            'A': list(range(25, 37)),
-            'S': list(range(37, 49)),
-            'E': list(range(49, 61)),
-            'C': list(range(61, 73))
-        }
-        
-        all_questions = []
-        
-        # Include all questions from each type
-        for riasec_type, question_pool in question_ranges.items():
-            all_questions.extend(question_pool)
-        
-        # Shuffle the final order
-        random.shuffle(all_questions)
-        
-        return all_questions
+    Returns: [(type, score), ...] dari tertinggi ke terendah
+    """
+    return sorted(
+        scores.items(),
+        key=lambda x: (-x[1], RIASEC_DEFAULT_ORDER.index(x[0]))
+    )
+
+
+def validate_scores(scores: Dict[str, int]) -> Optional[str]:
+    """
+    Validasi skor untuk mendeteksi profil tidak valid / skor rendah.
     
-    def calculate_scores(self, responses: List[RIASECAnswerItem]) -> Dict[str, int]:
-        """
-        Calculate RIASEC scores from responses using RAW SCORE method
-        
-        IMPORTANT RULES:
-        - Uses RAW SCORE (summation), NOT averaging!
-        - Each RIASEC type has 12 questions with answers 1-5
-        - Valid score range per type: 12-60 (12 × 1 = 12 min, 12 × 5 = 60 max)
-        - DO NOT divide by question count - this is intentional!
-        
-        Example:
-            - User answers all "R" questions with value 5: score_R = 60
-            - User answers all "R" questions with value 1: score_R = 12
-            - User answers all "R" questions with value 3: score_R = 36
-        
-        Args:
-            responses: List of user responses (72 total: 12 per RIASEC type)
-            
-        Returns:
-            Dict with RAW scores per type: {"R": 50, "I": 48, "A": 46, ...}
-        """
-        # Initialize scores
-        scores = {'R': 0, 'I': 0, 'A': 0, 'S': 0, 'E': 0, 'C': 0}
-        
-        # Load questions to determine type
-        questions = self.load_questions_data()
-        
-        # Aggregate scores
-        for response in responses:
-            question = questions.get(response.question_id)
-            if not question:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid question_id: {response.question_id}"
-                )
-            
-            riasec_type = question['riasec_type'][0] # first letter, example: 'Realistic' -> 'R'
-            scores[riasec_type] += response.answer_value
-        
-        return scores
+    Range skor: per tipe 12-60 (12 soal × nilai 1-5), total 72-360.
     
-    def classify_riasec_code(
-        self, 
-        scores: Dict[str, int]
-    ) -> Tuple[str, str, bool]:
-        """
-        Classify RIASEC code based on scores
-        
-        Args:
-            scores: Dict with RIASEC scores
-            
-        Returns:
-            Tuple of (riasec_code, classification_type, is_inconsistent)
-        """
-        # Define RIASEC order for tie-breaker (R-I-A-S-E-C)
-        riasec_order = {"R": 0, "I": 1, "A": 2, "S": 3, "E": 4, "C": 5}
-        
-        # Sort scores descending by score, then ascending by RIASEC order (tie-breaker)
-        # Key: (-score, riasec_index) - negative score for descending, positive index for ascending
-        sorted_scores = sorted(
-            scores.items(), 
-            key=lambda x: (-x[1], riasec_order.get(x[0], 999)), 
-            reverse=False
+    Kategori dan tindakan:
+    - Semua 6 tipe identik ekstrem → HTTP 422, wajib ulang (bukan sekadar tie)
+    - Severe Low (total < 120)     → HTTP 422, tidak disimpan sebagai profil final
+    - Low Overall Interest (< 150) → return warning string, tetap diproses
+    - Normal                        → return None
+    
+    CATATAN: Tie Rank1-2, Rank1-2-3, atau Rank2-3 BUKAN invalid —
+    itu ditangani oleh tie-breaker di sort_scores() dan classify_riasec_code().
+    Hanya "semua 6 tipe identik" yang benar-benar tidak valid dan harus ditolak.
+    """
+    total = sum(scores.values())
+    values = list(scores.values())
+
+    # Invalid: semua 6 tipe identik (pola ekstrem — user asal pilih semua sama)
+    # Berbeda dari tie rank 1-2 atau 1-2-3 yang masih bisa diproses
+    if len(set(values)) == 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Profil tidak valid: semua skor RIASEC identik. "
+                "Hasil tidak dapat diproses. Silakan ulangi asesmen dengan lebih cermat."
+            )
         )
 
-        # 7. Update session status
-        self.session_repo.mark_riasec_completed(db, session_id)
+    # Severe Low: total < 120 dari maksimum 360 (72 soal × nilai 5)
+    if total < 120:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Skor keseluruhan terlalu rendah (total: {total} dari maksimum 360). "
+                "Hasil tidak dapat disimpan sebagai profil final. "
+                "Silakan ulangi asesmen."
+            )
+        )
 
-        # Urutkan kunci untuk top 3
-        sorted_codes = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        top_3_list = [item[0] for item in sorted_codes[:3]]
+    # Low Overall Interest: total < 150 — tetap diproses tapi beri peringatan
+    if total < 150:
+        return (
+            f"Skor keseluruhan rendah (total: {total}). "
+            "Hasil profil mungkin belum optimal. Disarankan untuk eksplorasi minat lebih lanjut."
+        )
+
+    return None  # Skor normal, tidak ada peringatan
+
+
+def classify_riasec_code(scores: Dict[str, int]) -> Tuple[str, str, bool]:
+    """
+    Klasifikasi kode RIASEC: 1 huruf, 2 huruf, atau 3 huruf.
+    
+    Alur: cek 1 huruf → jika gagal cek 2 huruf → jika gagal fallback 3 huruf.
+    
+    Returns:
+        Tuple[riasec_code, classification_type, is_inconsistent_profile]
+        Contoh: ("RIA", "triple", False) atau ("RS", "dual", True)
+    
+    Aturan lengkap:
+    
+    KODE 1 HURUF — semua syarat harus terpenuhi:
+        - Syarat 1 (Gap Absolut): rank1 - rank2 >= 9
+        - Syarat 2 (Gap Relatif): (rank1 - rank2) / rank1 >= 0.15
+        - Syarat 3 (Skor Minimum): rank1 >= 40
+    
+    KODE 2 HURUF — semua syarat harus terpenuhi:
+        - Syarat 1: rank1 - rank2 < 9  (dua tipe teratas berdekatan)
+        - Syarat 2: rank2 - rank3 >= 9 (ada jarak jelas antara tipe ke-2 dan ke-3)
+        - Syarat 3: rank2 >= 30        (tipe kedua tidak boleh lemah)
+        - Syarat 4: rank1 >= 40        (tipe pertama harus cukup kuat)
+        Note: Jika rank1 dan rank2 adalah opposite → is_inconsistent = True
+        
+    KODE 3 HURUF (Fallback):
+        - Low Differentiation: gap 1-2 < 9 DAN gap 2-3 < 9
+        - Low Overall Interest: rank1 < 40
+        - Forced Fallback: gagal syarat 2 huruf
+    
+    Bridge Table (2 huruf → 3 huruf):
+        rank1 >= 40, gap 1-2 < 9, gap 2-3 >= 9, rank2 >= 30 → 2 HURUF
+        rank1 >= 40, gap 1-2 < 9, gap 2-3 < 9,  rank2 >= 30 → 3 HURUF
+        rank1 >= 40, gap 1-2 < 9, gap 2-3 >= 9, rank2 < 30  → 3 HURUF
+        rank1 < 40,  apapun                                   → 3 HURUF
+
+    KASUS TIE:
+        - Tie Rank1-2      → bisa tetap jadi 2 huruf jika syarat terpenuhi.
+                             PDF: cek skor kompetensi dulu, fallback ke R-I-A-S-E-C.
+                             Brief saat ini: pakai urutan default R-I-A-S-E-C langsung
+                             (lihat catatan di sort_scores tentang skor kompetensi).
+        - Tie Rank1-2-3    → fallback 3 huruf otomatis (gap 1-2=0 < 9 DAN gap 2-3=0 < 9)
+        - Tie Rank1-2-3-4  → low differentiation → 3 huruf. PDF: pilih 3 huruf berdasarkan
+                             skor kompetensi; jika masih tied → Unranked Set.
+                             Brief saat ini: tie-breaker urutan default R-I-A-S-E-C (edge case).
+        - Tie Rank2-3      → rank1 tetap dominan, bisa jadi 1 huruf. Keduanya diperlakukan
+                             setara di ekspansi kandidat Tier 2 dan Tier 3.
+        - Tie semua 6      → sudah ditolak di validate_scores() sebelum sampai ke sini
+    """
+    sorted_scores = sort_scores(scores)
+
+    rank1_type, rank1_score = sorted_scores[0]
+    rank2_type, rank2_score = sorted_scores[1]
+    rank3_type, rank3_score = sorted_scores[2]
+
+    gap_1_2 = rank1_score - rank2_score
+    gap_2_3 = rank2_score - rank3_score
+
+    # ===== CEK KODE 1 HURUF =====
+    if (
+        rank1_score >= 40
+        and gap_1_2 >= 9
+        and (gap_1_2 / rank1_score) >= 0.15
+    ):
+        return (rank1_type, "single", False)
+
+    # ===== CEK KODE 2 HURUF =====
+    if (
+        rank1_score >= 40
+        and gap_1_2 < 9
+        and gap_2_3 >= 9
+        and rank2_score >= 30
+    ):
+        code = rank1_type + rank2_type
+        is_inconsistent = (rank1_type, rank2_type) in OPPOSITE_PAIRS
+        return (code, "dual", is_inconsistent)
+
+    # ===== FALLBACK: KODE 3 HURUF =====
+    # Termasuk kondisi: Tie Rank1-2-3 (gap keduanya = 0), Low Differentiation, Low Overall.
+    # Profil 3 huruf juga bisa inkonsisten jika rank1-rank2 adalah opposite pair.
+    # Dalam kasus ini split-path tetap diterapkan di ekspansi kandidat agar tidak ada
+    # profesi "gabungan" yang dipaksakan dari dua kutub kepribadian yang berlawanan.
+    code = rank1_type + rank2_type + rank3_type
+    is_inconsistent = (rank1_type, rank2_type) in OPPOSITE_PAIRS
+    return (code, "triple", is_inconsistent)
+
+
+# ============================================================
+# FUNGSI EKSPANSI KANDIDAT PROFESI
+# ============================================================
+
+def expand_profession_candidates(
+    riasec_code: str,
+    classification_type: str,
+    is_inconsistent_profile: bool,
+    sorted_scores: List[Tuple[str, int]],
+    profession_repo: "ProfessionRepository"
+) -> List[Dict[str, Any]]:
+    """
+    Ekspansi kandidat profesi menggunakan 4-tier algorithm.
+    
+    Target: 5-30 profesi disimpan (semua tier dikumpulkan).
+    Dari total ini, top 3-5 (display_order 1-5) ditampilkan sebagai opsi UI Ikigai.
+    Semua profesi tetap dinilai AI — termasuk yang tidak ditampilkan sebagai opsi,
+    dipakai sebagai backup scoring saat user tidak memilih opsi apapun.
+
+    CATATAN — 30 kandidat vs PDF maks 5:
+    PDF menyebut "minimal 3, maksimal 5 profesi" untuk opsi UI.
+    Brief ini menyimpan hingga 30 profesi karena Ikigai butuh pool kandidat lebih besar
+    untuk scoring AI — termasuk profesi yang tidak ditampilkan sebagai opsi (backup scoring).
+    Ini konsisten dengan prinsip "compute all, display top-N" di bagian Ikigai PDF.
+    Yang ditampilkan ke user sebagai opsi pilihan tetap hanya top 3-5 (display_order <= 5).
+    
+    PENTING — Perbedaan Tier 2 untuk profil dual vs triple:
+
+    Profil DUAL (2 huruf, misal RI):
+      - Lapisan Primer: RI dan IR diperlakukan setara (gap kecil, urutan tidak signifikan)
+      - Lapisan Sekunder: tambah huruf ketiga (Rank3) yang bukan opposite → RIA, IRA, dst
+        Huruf ketiga masuk SETELAH lapisan primer, tidak dicampur dari awal.
+
+    Profil TRIPLE (3 huruf, misal RIA):
+      - Semua 6 permutasi (3! = 6) langsung dianggap setara — Unranked Set.
+      - Tidak ada prioritas urutan karena gap antar ketiganya kecil.
+
+    Tie Rank2-Rank3: kedua huruf diperlakukan setara di Tier 2 dan Tier 3.
+    """
+    if is_inconsistent_profile and len(riasec_code) >= 2:
+        return _expand_split_path(riasec_code, sorted_scores, profession_repo)
+
+    top_3_types = [t for t, _ in sorted_scores[:3]]
+    rank2_score = sorted_scores[1][1]
+    rank3_score = sorted_scores[2][1]
+
+    candidates = []
+    seen_ids: Set[int] = set()
+    display_order = 1
+
+    # === TIER 1: Exact Match ===
+    for p in profession_repo.find_by_riasec_code(riasec_code):
+        if p.id not in seen_ids:
+            candidates.append(_build_candidate(p, 1, "exact_match", 1.0, display_order))
+            seen_ids.add(p.id)
+            display_order += 1
+
+    # === TIER 2: Kode Kongruen ===
+    if len(candidates) < 30:
+        if classification_type == "dual":
+            # Profil 2 huruf: Lapisan Primer (permutasi 2 huruf saja: RI dan IR)
+            letter_a, letter_b = riasec_code[0], riasec_code[1]
+            for pcode in [letter_a + letter_b, letter_b + letter_a]:
+                if pcode != riasec_code:
+                    for p in profession_repo.find_by_riasec_code(pcode):
+                        if p.id not in seen_ids:
+                            candidates.append(_build_candidate(p, 2, "congruent_primer", 0.95, display_order))
+                            seen_ids.add(p.id)
+                            display_order += 1
+
+            # Lapisan Sekunder: tambah huruf ketiga yang bukan opposite
+            rank3_type = top_3_types[2]
+            opposite_of_a = next((b for a, b in OPPOSITE_PAIRS if a == letter_a), None)
+            opposite_of_b = next((b for a, b in OPPOSITE_PAIRS if a == letter_b), None)
+            if rank3_type not in {opposite_of_a, opposite_of_b}:
+                for scode in [letter_a + letter_b + rank3_type, letter_b + letter_a + rank3_type]:
+                    for p in profession_repo.find_by_riasec_code(scode):
+                        if p.id not in seen_ids:
+                            candidates.append(_build_candidate(p, 2, "congruent_secondary", 0.88, display_order))
+                            seen_ids.add(p.id)
+                            display_order += 1
+        else:
+            # Profil 3 huruf: Unranked Set — semua 6 permutasi setara
+            for perm_code in ["".join(p) for p in permutations(top_3_types) if "".join(p) != riasec_code]:
+                for p in profession_repo.find_by_riasec_code(perm_code):
+                    if p.id not in seen_ids:
+                        is_adj = _first_two_adjacent(perm_code)
+                        ctype = "congruent_adjacent" if is_adj else "congruent_permutation"
+                        candidates.append(_build_candidate(p, 2, ctype, 0.95 if is_adj else 0.85, display_order))
+                        seen_ids.add(p.id)
+                        display_order += 1
+
+    # === TIER 3: Subset 2 Huruf dari Top 3 ===
+    # Jika Rank2-Rank3 tied, semua subset diperlakukan setara
+    if len(candidates) < 30:
+        for subset_code in ["".join(pair) for pair in combinations(top_3_types, 2)]:
+            for p in profession_repo.find_by_riasec_code(subset_code):
+                if p.id not in seen_ids:
+                    is_adj = _letters_adjacent(subset_code[0], subset_code[1])
+                    ctype = "subset_adjacent" if is_adj else "subset_alternate"
+                    candidates.append(_build_candidate(p, 3, ctype, 0.75 if is_adj else 0.65, display_order))
+                    seen_ids.add(p.id)
+                    display_order += 1
+
+    # === TIER 4: Huruf Dominan Tunggal ===
+    if len(candidates) < 30:
+        for p in profession_repo.find_by_riasec_code(top_3_types[0]):
+            if p.id not in seen_ids:
+                candidates.append(_build_candidate(p, 4, "dominant_single", 0.55, display_order))
+                seen_ids.add(p.id)
+                display_order += 1
+
+    return candidates[:30]
+
+
+def _expand_split_path(
+    riasec_code: str,
+    sorted_scores: List[Tuple[str, int]],
+    profession_repo: "ProfessionRepository"
+) -> List[Dict[str, Any]]:
+    """
+    Split-Path Strategy untuk profil inkonsisten (opposite pair: RS, IE, atau AC).
+    
+    Dua huruf opposite diperlakukan sebagai dua jalur terpisah.
+    Tidak dipaksakan jadi satu profesi gabungan karena tidak ada profesi
+    yang benar-benar cocok untuk kepribadian yang saling berlawanan.
+    
+    Path A: huruf pertama + adjacent-nya
+    Path B: huruf kedua + adjacent-nya
+    
+    Contoh profil RS (R opposite S):
+    - Path A: cari profesi R, RI, RC
+    - Path B: cari profesi S, SA, SE
+    
+    Tag path="A" atau path="B" dikirim ke Flutter agar bisa tampilkan
+    narasi "Profilmu mencakup dua kutub yang berbeda..."
+    """
+    letter_a = riasec_code[0]
+    letter_b = riasec_code[1]
+    candidates = []
+    seen_ids: Set[int] = set()
+    display_order = 1
+
+    def expand_one_path(letter: str, path_label: str):
+        nonlocal display_order
+
+        # Exact match huruf tunggal
+        for p in profession_repo.find_by_riasec_code(letter):
+            if p.id not in seen_ids:
+                c = _build_candidate(p, 1, "exact_match", 1.0, display_order)
+                c["path"] = path_label
+                candidates.append(c)
+                seen_ids.add(p.id)
+                display_order += 1
+
+        # Adjacent 2-huruf: cari KEDUA urutan (letter+adj dan adj+letter)
+        # karena profil non-split memperlakukan RI dan IR setara,
+        # split-path juga perlu konsisten mencari kedua arah.
+        for adj in ADJACENT_MAP.get(letter, []):
+            for code2 in [letter + adj, adj + letter]:
+                for p in profession_repo.find_by_riasec_code(code2):
+                    if p.id not in seen_ids:
+                        c = _build_candidate(p, 2, "congruent_adjacent", 0.85, display_order)
+                        c["path"] = path_label
+                        candidates.append(c)
+                        seen_ids.add(p.id)
+                        display_order += 1
+
+    expand_one_path(letter_a, "A")
+    expand_one_path(letter_b, "B")
+    return candidates[:30]
+
+
+def _build_candidate(profession, tier: int, ctype: str, score: float, order: int) -> Dict:
+    """
+    Buat dict kandidat profesi untuk disimpan di JSONB candidates_data.
+
+    CATATAN — Model Profession & ProfessionRepository:
+    Fungsi ini mengasumsikan objek `profession` punya field .id dan .riasec_code_id.
+    Model Profession dan ProfessionRepository tidak didefinisikan di brief ini
+    karena scope-nya adalah RIASEC saja — profesi belum relevan di tahap ini.
+    Penjelasan lengkap model Profession, FK ke riasec_codes, dan implementasi
+    ProfessionRepository akan dibahas di Brief Part 2 (Ikigai).
+    """
+    return {
+        "profession_id": profession.id,
+        "riasec_code_id": profession.riasec_code_id,
+        "expansion_tier": tier,
+        "congruence_type": ctype,
+        "congruence_score": score,
+        "display_order": order,
+        # "path" hanya ditambahkan jika is_inconsistent_profile=True (oleh pemanggil)
+    }
+
+
+def _first_two_adjacent(code: str) -> bool:
+    """Cek apakah 2 huruf pertama kode bersifat adjacent di heksagon."""
+    if len(code) < 2:
+        return False
+    return code[1] in ADJACENT_MAP.get(code[0], [])
+
+
+def _letters_adjacent(a: str, b: str) -> bool:
+    """Cek apakah dua huruf RIASEC bersifat adjacent."""
+    return b in ADJACENT_MAP.get(a, [])
+
+
+# ============================================================
+# RIASEC SERVICE CLASS
+# ============================================================
+
+class RIASECService:
+    """
+    Orchestrator untuk seluruh alur submit RIASEC:
+    validasi → kalkulasi → klasifikasi → simpan → ekspansi kandidat
+    """
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.profession_repo = ProfessionRepository(db)
+
+    def submit_riasec_test(
+        self,
+        user: User,
+        session_token: str,
+        responses: List[RIASECAnswerItem]
+    ) -> dict:
+        """
+        Main method: terima 72 jawaban (12 per tipe), proses semua, return hasil lengkap.
+        
+        Alur di dalamnya:
+        1. Validasi sesi (token valid, status benar, milik user ini)
+        2. Validasi question_ids sesuai yang di-generate
+        3. Hitung skor mentah (raw sum per tipe)
+        4. Validasi skor (red flag check)
+        5. Klasifikasi kode RIASEC
+        6. Lookup detail kode dari tabel riasec_codes
+        7. INSERT riasec_responses
+        8. INSERT riasec_results
+        9. Ekspansi kandidat profesi (4-tier / split-path)
+        10. INSERT ikigai_candidate_professions
+        11. UPDATE status sesi → riasec_completed
+        12. Jika FIT_CHECK: UPDATE kenalidiri_history → completed, sesi → completed
+        13. Return hasil lengkap
+        """
+        # 1. Validasi sesi
+        session = self._validate_session(session_token, user)
+
+        # 2. Validasi question_ids
+        self._validate_question_ids(session.id, responses)
+
+        # 3. Hitung skor
+        scores = self._calculate_scores(responses)
+
+        # 4. Validasi skor (raise jika invalid/severe, return warning jika low)
+        validity_warning = validate_scores(scores)
+
+        # 5. Klasifikasi kode RIASEC
+        riasec_code, classification_type, is_inconsistent = classify_riasec_code(scores)
+
+        # 6. Lookup detail kode dari database
+        code_obj = self._get_riasec_code(riasec_code)
+
+        # 7. Simpan jawaban
+        self._save_responses(session.id, responses)
+
+        # 8. Simpan hasil klasifikasi
+        self._save_result(session.id, scores, code_obj.id, classification_type, is_inconsistent)
+
+        # 9. Ekspansi kandidat profesi
+        sorted_sc = sort_scores(scores)
+        candidates = expand_profession_candidates(
+            riasec_code=riasec_code,
+            classification_type=classification_type,
+            is_inconsistent_profile=is_inconsistent,
+            sorted_scores=sorted_sc,
+            profession_repo=self.profession_repo
+        )
+
+        # Peringatan jika kandidat kurang dari 3 (setelah semua tier)
+        if len(candidates) < 3 and not validity_warning:
+            validity_warning = (
+                f"Hanya ditemukan {len(candidates)} profesi kandidat. "
+                "Disarankan untuk eksplorasi minat lebih lanjut."
+            )
+
+        # 10. Simpan kandidat
+        self._save_candidates(session.id, riasec_code, code_obj.id, scores, candidates, is_inconsistent)
+
+        # 11. Update status sesi → riasec_completed
+        self._mark_riasec_completed(session)
+
+        # 12. Tentukan next step dan update history jika FIT_CHECK
+        if session.test_goal == "FIT_CHECK":
+            self._mark_fit_check_completed(session)
+            next_step = "fit_check_result"
+        else:
+            next_step = "ikigai"
+
+        # Hitung berapa yang ditampilkan sebagai opsi UI (display_order 1-5)
+        display_count = len([c for c in candidates if c["display_order"] <= 5])
+
+        self.db.commit()
 
         return {
-            "riasec_code": riasec_code,
-            "responses_data": responses,
-            "riasec_title": code_detail.riasec_title,
-            "riasec_scores": scores,
-            "classification_type": code_type,
-            "top_3_codes": top_3_list,
-            "code_details": {
-                "code": code_detail.riasec_code,
-                "title": code_detail.riasec_title,
-                "description": code_detail.riasec_description,
-                "strengths": code_detail.strengths,
-                "challenges": code_detail.challenges
+            "session_token": session_token,
+            "test_goal": session.test_goal,
+            "status": session.status,
+            "scores": {
+                "R": scores["R"], "I": scores["I"], "A": scores["A"],
+                "S": scores["S"], "E": scores["E"], "C": scores["C"]
+            },
+            "classification_type": classification_type,
+            "is_inconsistent_profile": is_inconsistent,
+            "riasec_code_info": {
+                "riasec_code": code_obj.riasec_code,
+                "riasec_title": code_obj.riasec_title,
+                "riasec_description": code_obj.riasec_description,
+                "strengths": code_obj.strengths or [],
+                "challenges": code_obj.challenges or [],
+                "strategies": code_obj.strategies or [],
+                "work_environments": code_obj.work_environments or [],
+                "interaction_styles": code_obj.interaction_styles or [],
+            },
+            "candidates": candidates,
+            "total_candidates": len(candidates),
+            "display_candidates_count": display_count,
+            "validity_warning": validity_warning,
+            "next_step": next_step
+        }
+
+    # ============================================================
+    # PRIVATE HELPERS
+    # ============================================================
+
+    def _validate_session(self, session_token: str, user: User) -> CareerProfileTestSession:
+        """Validasi sesi: ada, milik user ini, dan statusnya riasec_ongoing."""
+        session = self.db.query(CareerProfileTestSession).filter(
+            CareerProfileTestSession.session_token == session_token
+        ).first()
+
+        if not session:
+            raise HTTPException(status_code=404, detail="Session token tidak ditemukan")
+
+        if str(session.user_id) != str(user.id):
+            raise HTTPException(
+                status_code=403,
+                detail="Session ini bukan milik user yang sedang login"
+            )
+
+        if session.status != "riasec_ongoing":
+            if session.status == "riasec_completed":
+                detail_msg = "RIASEC sudah pernah disubmit untuk sesi ini. Gunakan GET /riasec/result/{token} untuk melihat hasilnya."
+            elif session.status == "completed":
+                detail_msg = "Sesi ini sudah selesai sepenuhnya."
+            else:
+                detail_msg = f"Status sesi tidak valid untuk submit RIASEC: '{session.status}'."
+            raise HTTPException(status_code=400, detail=detail_msg)
+
+        return session
+
+    def _validate_question_ids(self, session_id: int, responses: List[RIASECAnswerItem]):
+        """
+        Pastikan question_id yang dikirim user persis sama dengan
+        yang di-generate di awal sesi (tersimpan di riasec_question_sets).
+        Total harus tepat 72 ID, tidak boleh ada duplikat.
+        """
+        question_set = self.db.query(RIASECQuestionSet).filter(
+            RIASECQuestionSet.test_session_id == session_id
+        ).first()
+
+        if not question_set:
+            raise HTTPException(
+                status_code=404,
+                detail="Question set tidak ditemukan untuk sesi ini. Mulai ulang sesi."
+            )
+
+        provided_ids = [r.question_id for r in responses]
+        provided_ids_set = set(provided_ids)
+
+        # Cek duplikat question_id — set() menghilangkan duplikat,
+        # jadi 73 jawaban dengan satu ID double akan kelihatan seperti 72 unik
+        # tanpa pengecekan ini. Flutter harusnya tidak kirim duplikat tapi tetap harus dicegah.
+        if len(provided_ids) != len(provided_ids_set):
+            dupes = [qid for qid in provided_ids_set if provided_ids.count(qid) > 1]
+            raise HTTPException(
+                status_code=400,
+                detail=f"Terdapat question_id yang dikirim lebih dari satu kali: {dupes}"
+            )
+
+        expected_ids = set(question_set.question_ids)
+
+        if expected_ids != provided_ids_set:
+            missing = expected_ids - provided_ids_set
+            extra = provided_ids_set - expected_ids
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Question ID tidak sesuai dengan soal yang diberikan. "
+                    f"Kurang: {missing}, Berlebih: {extra}"
+                )
+            )
+
+    def _calculate_scores(self, responses: List[RIASECAnswerItem]) -> Dict[str, int]:
+        """
+        Hitung skor mentah (RAW SUM) per tipe RIASEC.
+        
+        PENTING — Gunakan RAW SUM, BUKAN rata-rata:
+        - 12 soal per tipe, nilai 1-5 per soal
+        - Range skor per tipe: 12-60
+        - Skor total range: 72-360
+        
+        Threshold klasifikasi (sesuai PDF):
+        - Rank1 >= 40  → valid untuk kode 1 atau 2 huruf
+        - Total < 120  → Severe Low (HTTP 422)
+        - Total < 150  → Low Overall Interest (warning)
+        
+        question_type di setiap response dikirim langsung oleh Flutter
+        berdasarkan data riasec_questions.json (tipe soal sudah diketahui Flutter).
+        """
+        scores = {"R": 0, "I": 0, "A": 0, "S": 0, "E": 0, "C": 0}
+        for r in responses:
+            scores[r.question_type] += r.answer_value
+        return scores
+
+    def _get_riasec_code(self, riasec_code: str) -> RIASECCode:
+        """Ambil detail kode RIASEC dari tabel riasec_codes."""
+        code_obj = self.db.query(RIASECCode).filter(
+            RIASECCode.riasec_code == riasec_code
+        ).first()
+
+        if not code_obj:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"Kode RIASEC '{riasec_code}' tidak ditemukan di database. "
+                    "Pastikan seed data riasec_codes sudah dijalankan (scripts/seed_riasec_codes.py)."
+                )
+            )
+        return code_obj
+
+    def _save_responses(self, session_id: int, responses: List[RIASECAnswerItem]):
+        """INSERT ke riasec_responses — satu baris per sesi, tidak pernah di-update."""
+        responses_data = {
+            "responses": [
+                {
+                    "question_id": r.question_id,
+                    "question_type": r.question_type,
+                    "answer_value": r.answer_value,
+                    "answered_at": r.answered_at.isoformat()
+                }
+                for r in responses
+            ],
+            "total_questions": 72,
+            "completed": True,
+            "submitted_at": datetime.utcnow().isoformat()
+        }
+
+        response_record = RIASECResponse(
+            test_session_id=session_id,
+            responses_data=responses_data
+        )
+        self.db.add(response_record)
+
+    def _save_result(
+        self,
+        session_id: int,
+        scores: Dict[str, int],
+        riasec_code_id: int,
+        classification_type: str,
+        is_inconsistent: bool
+    ):
+        """INSERT ke riasec_results."""
+        result = RIASECResult(
+            test_session_id=session_id,
+            score_r=scores["R"],
+            score_i=scores["I"],
+            score_a=scores["A"],
+            score_s=scores["S"],
+            score_e=scores["E"],
+            score_c=scores["C"],
+            riasec_code_id=riasec_code_id,
+            riasec_code_type=classification_type,
+            is_inconsistent_profile=is_inconsistent
+        )
+        self.db.add(result)
+
+    def _save_candidates(
+        self,
+        session_id: int,
+        riasec_code: str,
+        riasec_code_id: int,
+        scores: Dict[str, int],
+        candidates: List[Dict],
+        is_inconsistent: bool
+    ):
+        """
+        INSERT ke ikigai_candidate_professions.
+        
+        Satu baris JSONB per sesi. IMMUTABLE — tidak pernah di-UPDATE setelah ini.
+        
+        Kolom candidates_data berisi metadata lengkap untuk keperluan Ikigai service:
+        - Semua kandidat (5-30 profesi)
+        - Metadata ekspansi
+        - Strategi yang digunakan (4_tier_expansion atau split_path)
+        """
+        expansion_strategy = "split_path" if is_inconsistent else "4_tier_expansion"
+
+        candidates_data = {
+            "candidates": candidates,
+            "metadata": {
+                "total_candidates": len(candidates),
+                "user_riasec_code_id": riasec_code_id,
+                "user_riasec_code": riasec_code,
+                "user_riasec_scores": scores,
+                "is_inconsistent_profile": is_inconsistent,
+                "expansion_strategy": expansion_strategy,
+                "expansion_summary": {
+                    "tier_1_exact": sum(1 for c in candidates if c["expansion_tier"] == 1),
+                    "tier_2_congruent": sum(1 for c in candidates if c["expansion_tier"] == 2),
+                    "tier_3_subset": sum(1 for c in candidates if c["expansion_tier"] == 3),
+                    "tier_4_dominant": sum(1 for c in candidates if c["expansion_tier"] == 4),
+                },
+                "display_count": len([c for c in candidates if c["display_order"] <= 5]),
+                "generated_at": datetime.utcnow().isoformat()
             }
         }
-    
-    def get_result(self, db, session_id: int):
-        """Get RIASEC result yang sudah dihitung"""
-        result = self.riasec_repo.get_result_by_session(db, session_id)
-        
-        if not result:
-            return None
-        
-        # Load code detail
-        code_detail = self.riasec_repo.get_code_by_id(db, result.riasec_code_id)
-        
-        Args:
-            session_token: The session token
-            responses: List of user responses (72 items: 12 per RIASEC type)
-            
-        Returns:
-            Dict with complete result data
+
+        candidate_record = IkigaiCandidateProfession(
+            test_session_id=session_id,
+            candidates_data=candidates_data,
+            total_candidates=len(candidates),
+            generation_strategy=expansion_strategy,
+            max_candidates_limit=30
+        )
+        self.db.add(candidate_record)
+
+    def _mark_riasec_completed(self, session: CareerProfileTestSession):
+        """Update status sesi ke riasec_completed dan isi timestamp."""
+        session.status = "riasec_completed"
+        session.riasec_completed_at = datetime.utcnow()
+
+    def _mark_fit_check_completed(self, session: CareerProfileTestSession):
         """
-        try:
-            # 1. Validate session exists
-            session = self.session_repo.get_session_by_token(session_token)
-            print(f"DEBUG: Session status is '{session.status}'")
-            
-            if session.status not in ['riasec_pending', 'riasec_ongoing']:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid session status: {session.status}"
-                )
-            
-            # Update status to ongoing if it was pending
-            if session.status == 'riasec_pending':
-                session.status = 'riasec_ongoing'
-                self.db.commit()
-            
-            # 2. Validate responses
-            if len(responses) != 72:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Expected 72 responses (12 per RIASEC type), got {len(responses)}"
-                )
-            
-            # Get question set and validate question IDs
-            question_set = self.riasec_repo.get_question_set(session.id)
-            expected_ids = set(question_set.question_ids)
-            provided_ids = set(r.question_id for r in responses)
-            
-            if expected_ids != provided_ids:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Response question_ids don't match assigned questions"
-                )
-            
-            # Validate answer values (1-5)
-            for response in responses:
-                if not (1 <= response.answer_value <= 5):
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Answer must be between 1-5, got {response.answer_value}"
-                    )
-            
-            # 3. Calculate scores
-            scores = self.calculate_scores(responses)
-            
-            # 4. Classify RIASEC code
-            riasec_code, classification_type, is_inconsistent = \
-                self.classify_riasec_code(scores)
-            
-            # Get RIASEC code from database
-            riasec_code_obj = self.riasec_repo.get_riasec_code_by_string(riasec_code)
-            
-            # 5. Save responses to DB
-            responses_data = {
-                "answers": [
-                    {
-                        "question_id": r.question_id,
-                        "answer": r.answer_value
-                    }
-                    for r in responses
-                ]
-            }
-            
-            self.riasec_repo.save_responses(session.id, responses_data)
-            
-            # 6. Save result to DB
-            score_dict = {
-                'score_r': scores['R'],
-                'score_i': scores['I'],
-                'score_a': scores['A'],
-                'score_s': scores['S'],
-                'score_e': scores['E'],
-                'score_c': scores['C']
-            }
-            
-            result = self.riasec_repo.save_result(
-                session_id=session.id,
-                scores=score_dict,
-                riasec_code_id=riasec_code_obj.id,
-                classification_type=classification_type,
-                is_inconsistent_profile=is_inconsistent
-            )
-            
-            # 7. Generate candidate professions
-            candidates_data = self.profession_service.expand_candidates(
-                riasec_code=riasec_code,
-                riasec_code_id=riasec_code_obj.id,
-                user_scores=scores,
-                is_inconsistent_profile=is_inconsistent  # Pass inconsistency flag for Split-Path
-            )
-            
-            # 8. Save candidates to DB
-            self.riasec_repo.save_candidates(session.id, candidates_data)
-            
-            # 9. Update session status
-            self.session_repo.update_session_status(
-                session_id=session.id,
-                status='riasec_completed',
-                timestamp_field='riasec_completed_at'
-            )
-            
-            # 10. Build and return result response
-            return {
-                "session_token": session_token,
-                "status": "riasec_completed",
-                "result": {
-                    "riasec_code": riasec_code,
-                    "riasec_code_id": riasec_code_obj.id,
-                    "riasec_title": riasec_code_obj.riasec_title,
-                    "riasec_description": riasec_code_obj.riasec_description,
-                    "classification_type": classification_type,
-                    "is_inconsistent_profile": is_inconsistent,
-                    "scores": scores,
-                    "strengths": riasec_code_obj.strengths,
-                    "challenges": riasec_code_obj.challenges,
-                    "strategies": riasec_code_obj.strategies,
-                    "work_environments": riasec_code_obj.work_environments,
-                    "interaction_styles": riasec_code_obj.interaction_styles
-                },
-                "candidates": {
-                    "total_candidates": len(candidates_data.get('candidates', [])),
-                    "expansion_summary": candidates_data.get('expansion_summary', {}),
-                    "top_candidates": candidates_data.get('candidates', [])[:10]
-                }
-            }
-            
-        except HTTPException:
-            raise
-        except Exception as e:
+        Untuk FIT_CHECK: override status riasec_completed → completed sekaligus.
+
+        CATATAN ALUR STATUS:
+        _mark_riasec_completed() dipanggil duluan → status = "riasec_completed" (in-memory).
+        Method ini lalu override ke "completed" sebelum commit terjadi.
+        Jadi di database, status langsung masuk sebagai "completed" — tidak pernah
+        tersimpan sebagai "riasec_completed" untuk sesi FIT_CHECK.
+
+        Alur status FIT_CHECK (in-memory sebelum commit):
+          riasec_ongoing → riasec_completed → completed  (hanya completed yang ter-commit)
+
+        Alur status RECOMMENDATION:
+          riasec_ongoing → riasec_completed  (ter-commit di sini)
+          → ikigai_ongoing → ikigai_completed → completed  (di-commit di Ikigai service)
+        """
+        session.status = "completed"
+        session.completed_at = datetime.utcnow()
+
+        # Update kenalidiri_history
+        from app.db.models.kenalidiri_history import KenaliDiriHistory
+        history = self.db.query(KenaliDiriHistory).filter(
+            KenaliDiriHistory.detail_session_id == session.id
+        ).first()
+        if history:
+            history.status = "completed"
+            history.completed_at = datetime.utcnow()
+
+    def get_result(self, session_token: str, user: User) -> dict:
+        """Ambil hasil RIASEC yang sudah tersimpan untuk reload halaman."""
+        session = self.db.query(CareerProfileTestSession).filter(
+            CareerProfileTestSession.session_token == session_token
+        ).first()
+
+        if not session or str(session.user_id) != str(user.id):
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to submit RIASEC test: {str(e)}"
+                status_code=404,
+                detail="Sesi tidak ditemukan atau bukan milik user ini"
             )
 
-    def get_result(self, session_token: str) -> Dict[str, Any]:
-        """
-        Retrieve RIASEC test result
-        
-        sorted_codes = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        top_3_list = [item[0] for item in sorted_codes[:3]]
-        
+        result = self.db.query(RIASECResult).filter(
+            RIASECResult.test_session_id == session.id
+        ).first()
+
+        if not result:
+            raise HTTPException(
+                status_code=404,
+                detail="Hasil RIASEC belum tersedia untuk sesi ini"
+            )
+
+        code_obj = self.db.query(RIASECCode).filter(
+            RIASECCode.id == result.riasec_code_id
+        ).first()
+
+        candidates_record = self.db.query(IkigaiCandidateProfession).filter(
+            IkigaiCandidateProfession.test_session_id == session.id
+        ).first()
+
+        candidates = []
+        if candidates_record:
+            candidates = candidates_record.candidates_data.get("candidates", [])
+
+        display_count = len([c for c in candidates if c.get("display_order", 99) <= 5])
+        next_step = "ikigai" if session.test_goal == "RECOMMENDATION" else "fit_check_result"
+
         return {
-            "riasec_code": code_detail.riasec_code,
-            "riasec_title": code_detail.riasec_title,
-            "riasec_scores": scores,
+            "session_token": session_token,
+            "test_goal": session.test_goal,
+            "status": session.status,
+            "scores": {
+                "R": result.score_r, "I": result.score_i, "A": result.score_a,
+                "S": result.score_s, "E": result.score_e, "C": result.score_c
+            },
             "classification_type": result.riasec_code_type,
-            "top_3_codes": top_3_list,
-            "code_details": {
-                "code": code_detail.riasec_code,
-                "title": code_detail.riasec_title,
-                "description": code_detail.riasec_description,
-                "strengths": code_detail.strengths,
-                "challenges": code_detail.challenges
-            }
+            "is_inconsistent_profile": result.is_inconsistent_profile,
+            "riasec_code_info": {
+                "riasec_code": code_obj.riasec_code,
+                "riasec_title": code_obj.riasec_title,
+                "riasec_description": code_obj.riasec_description,
+                "strengths": code_obj.strengths or [],
+                "challenges": code_obj.challenges or [],
+                "strategies": code_obj.strategies or [],
+                "work_environments": code_obj.work_environments or [],
+                "interaction_styles": code_obj.interaction_styles or [],
+            },
+            "candidates": candidates,
+            "total_candidates": len(candidates),
+            "display_candidates_count": display_count,
+            "validity_warning": None,
+            "next_step": next_step
         }
