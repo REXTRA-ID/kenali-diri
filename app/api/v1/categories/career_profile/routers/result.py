@@ -30,7 +30,7 @@ async def get_personality_result(
     Get RIASEC scores and the generated personality description from AI.
     """
     service = ResultService(db)
-    return service.get_personality_result(current_user, session_token)
+    return await service.get_personality_result(current_user, session_token)
 
 
 @router.get(

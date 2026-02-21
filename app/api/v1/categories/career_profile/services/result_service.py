@@ -1,15 +1,15 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 from app.api.v1.categories.career_profile.repositories.session_repo import SessionRepository
 from app.api.v1.categories.career_profile.repositories.profession_repo import ProfessionRepository
 from app.api.v1.categories.career_profile.models.result import CareerRecommendation, FitCheckResult
-from app.api.v1.categories.career_profile.models.riasec import RIASECResult
-from app.api.v1.categories.career_profile.models.ikigai import IkigaiTotalScores
+from app.api.v1.categories.career_profile.models.riasec import RIASECResult, RIASECCode
 from app.api.v1.categories.career_profile.services.personality_service import PersonalityService
 from app.api.v1.categories.career_profile.services.fit_check_classifier import build_fit_check_explanation
 from app.db.models.user import User
+from app.shared.cache import redis_client as _redis
 
 
 class ResultService:
@@ -19,7 +19,6 @@ class ResultService:
         self.db = db
         self.session_repo = SessionRepository(db)
         self.profession_repo = ProfessionRepository(db)
-        self.personality_service = PersonalityService(db)
 
     def _get_verified_session(self, user: User, session_token: str):
         session = self.session_repo.get_by_token(self.db, session_token)
@@ -27,17 +26,27 @@ class ResultService:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Session not found or invalid.")
         return session
 
-    def get_personality_result(self, user: User, session_token: str) -> Dict[str, Any]:
+    async def get_personality_result(self, user: User, session_token: str) -> Dict[str, Any]:
         """Fetch RIASEC scores and generated personality description."""
         session = self._get_verified_session(user, session_token)
-        
+
         riasec_res = self.db.query(RIASECResult).filter(RIASECResult.test_session_id == session.id).first()
         if not riasec_res:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="RIASEC result not found.")
-            
-        about_text = self.personality_service.get_personality_about_text(
+
+        # Fetch the RIASECCode for title and description
+        riasec_code_obj = self.db.query(RIASECCode).filter(
+            RIASECCode.id == riasec_res.riasec_code_id
+        ).first()
+
+        riasec_title = riasec_code_obj.riasec_title if riasec_code_obj else riasec_res.riasec_code
+        riasec_description = riasec_code_obj.riasec_description if riasec_code_obj else ""
+
+        about_text = await PersonalityService.get_personality_about_text(
             riasec_code=riasec_res.riasec_code,
-            riasec_scores=riasec_res.scores_data
+            riasec_title=riasec_title,
+            riasec_description=riasec_description,
+            redis_client=_redis
         )
 
         return {
@@ -50,23 +59,21 @@ class ResultService:
     def get_fit_check_result(self, user: User, session_token: str) -> Dict[str, Any]:
         """Fetch Fit Check result."""
         session = self._get_verified_session(user, session_token)
-        
+
         fit_check = self.db.query(FitCheckResult).filter(FitCheckResult.test_session_id == session.id).first()
         if not fit_check:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Fit Check result not found. Did you finish the RIASEC test?")
-            
-        # Get profession to fetch the image/title
+
+        # Get profession to fetch the title/code
         prof_data = None
         if session.target_profession_id:
             prof = self.profession_repo.get_profession_by_id(
                 session.target_profession_id, session.id
             )
-            # Need actual master profession to get image
             if prof:
                 master_profs = self.profession_repo.get_master_professions_by_ids([prof.profession_id])
                 if master_profs:
                     p = master_profs[0]
-                    meta = p.meta_data or {}
                     prof_data = {
                         "id": p.id,
                         "title": p.title,
@@ -91,7 +98,7 @@ class ResultService:
     def get_recommendation_result(self, user: User, session_token: str) -> Dict[str, Any]:
         """Fetch final Career Recommendations."""
         session = self._get_verified_session(user, session_token)
-        
+
         rec = self.db.query(CareerRecommendation).filter(CareerRecommendation.test_session_id == session.id).first()
         if not rec:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Recommendations not generated yet.")
@@ -99,14 +106,14 @@ class ResultService:
         # Hydrate the recommended professions with details from DigitalProfession
         rec_data = dict(rec.recommendations_data)
         prof_docs = rec_data.get("recommended_professions", [])
-        
+
         # Get master data for top professions
         prof_ids = [p["profession_id"] for p in prof_docs if "profession_id" in p]
-        
+
         if prof_ids:
             master_profs = self.profession_repo.get_master_professions_by_ids(prof_ids)
             prof_map = {mp.id: mp for mp in master_profs}
-            
+
             for p in prof_docs:
                 p_id = p.get("profession_id")
                 mp = prof_map.get(p_id)
