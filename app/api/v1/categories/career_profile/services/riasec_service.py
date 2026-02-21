@@ -787,6 +787,58 @@ class RIASECService:
         if history:
             history.status = "completed"
             history.completed_at = datetime.utcnow()
+            
+        # === TAMBAHAN BARU: INSERT fit_check_results ===
+        self._insert_fit_check_result(session)
+
+    def _insert_fit_check_result(self, session: CareerProfileTestSession):
+        """
+        Hitung rule-based classification dan INSERT ke fit_check_results.
+        Dipanggil hanya untuk sesi FIT_CHECK setelah RIASEC selesai.
+        """
+        from app.api.v1.categories.career_profile.models.result import FitCheckResult
+        from app.api.v1.categories.career_profile.services.fit_check_classifier import classify_fit_check
+        from app.api.v1.categories.career_profile.models.riasec import RIASECResult, RIASECCode
+        from app.api.v1.categories.career_profile.repositories.profession_repo import ProfessionRepository
+
+        # Ambil kode RIASEC user dari riasec_results
+        riasec_result = self.db.query(RIASECResult).filter(
+            RIASECResult.test_session_id == session.id
+        ).first()
+        if not riasec_result:
+            raise HTTPException(status_code=500, detail="riasec_results tidak ditemukan saat insert fit_check_results")
+
+        user_code_obj = self.db.query(RIASECCode).filter(
+            RIASECCode.id == riasec_result.riasec_code_id
+        ).first()
+
+        # Ambil kode RIASEC profesi target
+        profession = ProfessionRepository(self.db).get_by_id(session.target_profession_id)
+        if not profession:
+            raise HTTPException(status_code=404, detail=f"Profesi target ID {session.target_profession_id} tidak ditemukan")
+
+        prof_code_obj = self.db.query(RIASECCode).filter(
+            RIASECCode.id == profession.riasec_code_id
+        ).first()
+
+        # Klasifikasi
+        classification = classify_fit_check(
+            user_riasec_code=user_code_obj.riasec_code,
+            profession_riasec_code=prof_code_obj.riasec_code
+        )
+
+        fit_check_record = FitCheckResult(
+            test_session_id=session.id,
+            profession_id=session.target_profession_id,
+            user_riasec_code_id=riasec_result.riasec_code_id,
+            profession_riasec_code_id=prof_code_obj.id,
+            match_category=classification["match_category"],
+            rule_type=classification["rule_type"],
+            dominant_letter_same=classification.get("dominant_letter_same", False),
+            is_adjacent_hexagon=classification.get("is_adjacent_hexagon", False),
+            match_score=classification.get("match_score")
+        )
+        self.db.add(fit_check_record)
 
     def get_result(self, session_token: str, user: User) -> dict:
         """Ambil hasil RIASEC yang sudah tersimpan untuk reload halaman."""

@@ -17,3 +17,7 @@ from app.api.v1.categories.career_profile.models.ikigai import (
     IkigaiDimensionScores,
     IkigaiTotalScores
 )
+from app.api.v1.categories.career_profile.models.result import (
+    CareerRecommendation,
+    FitCheckResult
+)

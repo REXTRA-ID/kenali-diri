@@ -51,21 +51,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('riasec_code')
     )
-    op.create_table('users',
-    sa.Column('id', sa.UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
-    sa.Column('fullname', sa.Text(), nullable=False),
-    sa.Column('email', sa.Text(), nullable=False),
-    sa.Column('password', sa.Text(), nullable=False),
-    sa.Column('profile_image_url', sa.Text(), nullable=True),
-    sa.Column('is_verified', sa.Boolean(), server_default=sa.text('false'), nullable=False),
-    sa.Column('phone_number', sa.Text(), nullable=False),
-    sa.Column('role', sa.Text(), server_default=sa.text("'USER'"), nullable=False),
-    sa.Column('created_at', sa.TIMESTAMP(), server_default=sa.text('now()'), nullable=True),
-    sa.Column('updated_at', sa.TIMESTAMP(), nullable=True),
-    sa.Column('deleted_at', sa.TIMESTAMP(timezone=True), nullable=True),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('email')
-    )
+
     op.create_table('careerprofile_test_sessions',
     sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
     sa.Column('user_id', sa.UUID(), nullable=False),
@@ -173,7 +159,7 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_digital_professions_riasec_code_id'), table_name='digital_professions')
     op.drop_table('digital_professions')
     op.drop_table('careerprofile_test_sessions')
-    op.drop_table('users')
+
     op.drop_table('riasec_codes')
     op.drop_index('idx_kenalidiri_categories_code', table_name='kenalidiri_categories')
     op.drop_index('idx_kenalidiri_categories_active', table_name='kenalidiri_categories')
