@@ -29,6 +29,10 @@ from app.shared.scoring_utils import (
     calculate_confidence_adjusted_click,
     calculate_final_profession_score
 )
+from app.api.v1.categories.career_profile.services.recommendation_narrative_service import RecommendationNarrativeService
+from app.api.v1.categories.career_profile.models.result import CareerRecommendation
+from app.api.v1.categories.career_profile.models.riasec import RIASECResult
+from app.api.v1.categories.career_profile.models.digital_profession import DigitalProfession
 
 logger = structlog.get_logger()
 
@@ -433,6 +437,109 @@ class IkigaiService:
         session.status = "completed"
         session.completed_at = datetime.now(timezone.utc)
         self.db.commit()
+
+        # ────────────────────────────────────────────────────────────────
+        # PHASE 3 INTEGRATION: Generate + Save Recommendation Narrative
+        # ────────────────────────────────────────────────────────────────
+        try:
+            top_2_scores = total_scores[:2]
+            top_2_ids = [p["profession_id"] for p in top_2_scores]
+
+            # Fetch master profession data from DigitalProfession
+            master_profs = self.db.query(DigitalProfession).filter(
+                DigitalProfession.id.in_(top_2_ids)
+            ).all()
+            prof_map = {mp.id: mp for mp in master_profs}
+
+            profession_details = []
+            for pid in top_2_ids:
+                mp = prof_map.get(pid)
+                if mp:
+                    meta = mp.meta_data or {}
+                    profession_details.append({
+                        "profession_id": pid,
+                        "name": mp.title,
+                        "riasec_code": mp.riasec_code.riasec_code if mp.riasec_code else "-",
+                        "about_description": mp.description or "-",
+                        "activities": meta.get("work_activities", []),
+                        "hard_skills_required": meta.get("hard_skills", [])
+                    })
+
+            # Build ikigai responses dict (reasoning text per dimension)
+            ikigai_responses = {
+                "what_you_love": answers.get("what_you_love", {}).get("reasoning_text", ""),
+                "what_you_are_good_at": answers.get("what_you_are_good_at", {}).get("reasoning_text", ""),
+                "what_the_world_needs": answers.get("what_the_world_needs", {}).get("reasoning_text", ""),
+                "what_you_can_be_paid_for": answers.get("what_you_can_be_paid_for", {}).get("reasoning_text", "")
+            }
+
+            # Retrieve the user RIASEC code
+            riasec_res = self.db.query(RIASECResult).filter(
+                RIASECResult.test_session_id == session.id
+            ).first()
+            user_riasec_code = riasec_res.riasec_code if riasec_res else "Unknown"
+
+            # Call Gemini for narrative
+            narrative_service = RecommendationNarrativeService()
+            narrative_data = await narrative_service.generate_recommendations_narrative(
+                ikigai_responses=ikigai_responses,
+                top_2_professions=top_2_scores,
+                profession_details=profession_details,
+                user_riasec_code=user_riasec_code
+            )
+
+            # Build the full recommendations_data JSONB
+            candidate_names = [
+                {"profession_id": c["profession_id"], "name": c["profession_name"]}
+                for c in candidates_with_content
+            ]
+            recommended_professions = []
+            for rank, p in enumerate(top_2_scores, start=1):
+                pid = p["profession_id"]
+                mp = prof_map.get(pid)
+                reasoning = narrative_data.get("match_reasoning", {}).get(str(pid), "")
+                recommended_professions.append({
+                    "rank": rank,
+                    "profession_id": pid,
+                    "profession_name": p.get("profession_name", ""),
+                    "match_percentage": round(p["total_score"] * 100, 2),
+                    "match_reasoning": reasoning,
+                    "riasec_alignment": {
+                        "user_code": user_riasec_code,
+                        "profession_code": mp.riasec_code.riasec_code if (mp and mp.riasec_code) else "-",
+                        "congruence_type": p.get("congruence_type", "-"),
+                        "congruence_score": p.get("congruence_score", 0)
+                    },
+                    "score_breakdown": {
+                        "total_score": round(p["total_score"] * 100, 2),
+                        "intrinsic_score": round(p["intrinsic_score"] * 100, 2),
+                        "extrinsic_score": round(p["extrinsic_score"] * 100, 2),
+                        "score_what_you_love": round(p["score_dimensions"]["what_you_love"] * 100, 2),
+                        "score_what_you_are_good_at": round(p["score_dimensions"]["what_you_are_good_at"] * 100, 2),
+                        "score_what_the_world_needs": round(p["score_dimensions"]["what_the_world_needs"] * 100, 2),
+                        "score_what_you_can_be_paid_for": round(p["score_dimensions"]["what_you_can_be_paid_for"] * 100, 2)
+                    }
+                })
+
+            recommendations_data = {
+                "ikigai_profile_summary": narrative_data.get("ikigai_profile_summary", {}),
+                "candidate_profession_names": candidate_names,
+                "recommended_professions": recommended_professions,
+                "points_awarded": None,
+                "TODO_points": "Implementasi poin Rextra belum aktif."
+            }
+
+            career_rec = CareerRecommendation(
+                test_session_id=session.id,
+                recommendations_data=recommendations_data
+            )
+            self.db.add(career_rec)
+            self.db.commit()
+            logger.info("Recommendation narrative saved", session_id=session.id)
+
+        except Exception as e:
+            logger.error("Failed to generate/save recommendation narrative", error=str(e), session_id=session.id)
+            # Non-fatal: scoring still completed, narrative is best-effort
         
         # Format response
         breakdown = []

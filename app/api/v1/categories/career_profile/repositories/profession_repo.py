@@ -56,6 +56,15 @@ class ProfessionRepository:
             DigitalProfession.riasec_code_id == riasec_code_id
         ).limit(limit).all()
 
+    def get_master_professions_by_ids(
+        self,
+        profession_ids: List[int]
+    ) -> List[DigitalProfession]:
+        """Query actual digital professions by multiple IDs"""
+        return self.db.query(DigitalProfession).filter(
+            DigitalProfession.id.in_(profession_ids)
+        ).all()
+
     def get_master_professions_by_riasec_code_ids(
         self,
         riasec_code_ids: List[int],

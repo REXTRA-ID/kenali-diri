@@ -6,7 +6,7 @@ This module aggregates all API v1 routers including the career profile endpoints
 """
 from fastapi import APIRouter
 
-from app.api.v1.categories.career_profile.routers import session, riasec, ikigai
+from app.api.v1.categories.career_profile.routers import session, riasec, ikigai, result
 from app.api.v1.general.routers import category, history
 
 # Create main v1 router
@@ -36,6 +36,11 @@ api_v1_router.include_router(
 api_v1_router.include_router(
     history.router,
     tags=["History"]
+)
+
+api_v1_router.include_router(
+    result.router,
+    tags=["Career Profile - Result"]
 )
 
 # Include other routers as needed
