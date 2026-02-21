@@ -2,6 +2,7 @@ import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
+from sqlalchemy.orm import joinedload
 import time
 
 from sqlalchemy.orm import Session
@@ -147,24 +148,34 @@ class IkigaiService:
         candidates_data = self.expansion_service.get_candidates_with_details(session_id)
         # Ambil maksimal 5 kandidat dari display order 1..5
         top_candidates = [c for c in candidates_data['candidates'] if c.get('display_order', 99) <= 5]
-        
-        # Prepare context for AI batch generate
+
+        # Fetch detail profesi dari DigitalProfession dengan eager load RIASEC code
+        top_profession_ids = [c['profession_id'] for c in top_candidates]
+        master_profs_list = self.db.query(DigitalProfession).options(
+            joinedload(DigitalProfession.riasec_code)
+        ).filter(DigitalProfession.id.in_(top_profession_ids)).all()
+        master_prof_map: Dict[int, DigitalProfession] = {mp.id: mp for mp in master_profs_list}
+
+        # Prepare context for AI batch generate — sertakan data profesi lengkap
         profession_contexts = []
         for c in top_candidates:
+            pid = c['profession_id']
+            mp = master_prof_map.get(pid)
+            meta = mp.meta_data or {} if mp else {}
             profession_contexts.append({
-                "profession_id": c['profession_id'],
-                "name": c.get('profession_name'),
-                "riasec_code": c.get('riasec_code'), # Might be missed, we can fallback to candidates matched_code
-                "riasec_title": c.get('riasec_code'),
-                "about_description": c.get('profession_description'),
-                "riasec_description": "",
-                "activities": [],
-                "hard_skills_required": [],
-                "soft_skills_required": [],
-                "tools_required": [],
-                "market_insights": [],
+                "profession_id": pid,
+                "name": mp.title if mp else c.get('profession_name', 'Unknown'),
+                "riasec_code": mp.riasec_code.riasec_code if (mp and mp.riasec_code) else "-",
+                "riasec_title": mp.riasec_code.riasec_title if (mp and mp.riasec_code) else "-",
+                "about_description": (mp.description or "")[:400] if mp else "",
+                "riasec_description": mp.riasec_code.riasec_description if (mp and mp.riasec_code) else "",
+                "activities": meta.get("work_activities", [])[:5],
+                "hard_skills_required": meta.get("hard_skills", [])[:5],
+                "soft_skills_required": meta.get("soft_skills", [])[:3],
+                "tools_required": meta.get("tech_stack", [])[:4],
+                "market_insights": meta.get("market_insights", [])[:2],
             })
-            
+
         ai_responses = await gemini_client.generate_ikigai_content(profession_contexts)
         
         ai_map = {item['profession_id']: item for item in ai_responses if 'profession_id' in item}
@@ -172,6 +183,7 @@ class IkigaiService:
         result_candidates = []
         for c in top_candidates:
             pid = c['profession_id']
+            mp = master_prof_map.get(pid)
             ai_data = ai_map.get(pid, {})
             # fallback jika gagal content
             what_you_love = ai_data.get('what_you_love', 'Deskripsi tidak tersedia.')
@@ -225,7 +237,8 @@ class IkigaiService:
         dim_data = {
             "selected_profession_id": selected_profession_id,
             "selection_type": selection_type,
-            "reasoning_text": reasoning_text
+            "reasoning_text": reasoning_text,
+            "answered_at": datetime.now(timezone.utc).isoformat()  # ISO8601 sesuai skema dokumentasi
         }
 
         # Update specific dim field
@@ -296,8 +309,10 @@ class IkigaiService:
         all_candidate_entries = candidate_record.candidates_data.get("candidates", [])
         all_profession_ids = [c["profession_id"] for c in all_candidate_entries]
 
-        # Ambil detail profesi dari tabel master
-        master_profs = self.db.query(DigitalProfession).filter(
+        # Ambil detail profesi dari tabel master + eager load RIASEC code (hindari N+1)
+        master_profs = self.db.query(DigitalProfession).options(
+            joinedload(DigitalProfession.riasec_code)
+        ).filter(
             DigitalProfession.id.in_(all_profession_ids)
         ).all()
         prof_detail_map: Dict[int, DigitalProfession] = {mp.id: mp for mp in master_profs}
@@ -408,13 +423,14 @@ class IkigaiService:
             r_values = [item["r_raw"] for item in raw_list]
             r_min = min(r_values) if r_values else 0.0
             r_max = max(r_values) if r_values else 1.0
-            denom = (r_max - r_min) if r_max != r_min else 1.0
+            denom = r_max - r_min  # 0 jika semua r_raw identik
 
             sel_id_for_dim = selected_ids.get(dim)
             scored_list = []
             for item in raw_list:
                 r_raw = item["r_raw"]
-                r_norm = (r_raw - r_min) / denom if denom > 0 else 0.5
+                # Jika semua r_raw identik (denom=0), r_norm = 0.5 (netral)
+                r_norm = 0.5 if denom == 0 else (r_raw - r_min) / denom
                 r_norm = max(0.0, min(1.0, round(r_norm, 4)))
 
                 is_selected = (sel_id_for_dim is not None and item["profession_id"] == sel_id_for_dim)
@@ -556,6 +572,16 @@ class IkigaiService:
         session.status = "completed"
         session.ikigai_completed_at = datetime.now(timezone.utc)
         session.completed_at = datetime.now(timezone.utc)
+
+        # Update kenalidiri_history untuk RECOMMENDATION flow (sesuai Brief Part 1)
+        from app.db.models.kenalidiri_history import KenaliDiriHistory
+        history = self.db.query(KenaliDiriHistory).filter(
+            KenaliDiriHistory.detail_session_id == session.id
+        ).first()
+        if history:
+            history.status = "completed"
+            history.completed_at = datetime.now(timezone.utc)
+
         self.db.commit()
 
         elapsed = round(time.time() - start_time, 2)
@@ -689,7 +715,7 @@ class IkigaiService:
             message="Ikigai berhasil di-submit dan diskor."
         )
 
-    def get_ikigai_result(self, user: User, session_token: str) -> IkigaiCompletionResponse:
+    async def get_ikigai_result(self, user: User, session_token: str) -> IkigaiCompletionResponse:
         session = self.session_repo.get_by_token(self.db, session_token)
         if not session or session.user_id != user.id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")

@@ -113,4 +113,4 @@ async def get_ikigai_result(
     Hanya bisa diakses jika sesi sudah completed.
     """
     service = IkigaiService(db)
-    return service.get_ikigai_result(session_token=session_token, user=current_user)
+    return await service.get_ikigai_result(session_token=session_token, user=current_user)

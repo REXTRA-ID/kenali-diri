@@ -809,6 +809,11 @@ class RIASECService:
         user_code_obj = self.db.query(RIASECCode).filter(
             RIASECCode.id == riasec_result.riasec_code_id
         ).first()
+        if not user_code_obj:
+            raise HTTPException(
+                status_code=500,
+                detail=f"riasec_codes tidak ditemukan untuk riasec_code_id={riasec_result.riasec_code_id}. Pastikan seed data riasec_codes sudah dijalankan."
+            )
 
         # Ambil kode RIASEC profesi target
         profession = ProfessionRepository(self.db).get_by_id(session.target_profession_id)
@@ -818,6 +823,11 @@ class RIASECService:
         prof_code_obj = self.db.query(RIASECCode).filter(
             RIASECCode.id == profession.riasec_code_id
         ).first()
+        if not prof_code_obj:
+            raise HTTPException(
+                status_code=500,
+                detail=f"riasec_codes tidak ditemukan untuk profesi ID={session.target_profession_id} (riasec_code_id={profession.riasec_code_id}). Pastikan data profesi sudah memiliki riasec_code yang valid."
+            )
 
         # Klasifikasi
         classification = classify_fit_check(
