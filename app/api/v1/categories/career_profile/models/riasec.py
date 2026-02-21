@@ -1,9 +1,9 @@
-# app/api/v1/categories/career_profile/models/riasec.py
 from sqlalchemy import (
     Column, BigInteger, String, Boolean, Integer,
     ForeignKey, Index, CheckConstraint
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy import TIMESTAMP
 from app.db.base import Base
@@ -99,7 +99,18 @@ class RIASECResult(Base):
     riasec_code_type = Column(String(20), nullable=False)  # "single" / "dual" / "triple"
     is_inconsistent_profile = Column(Boolean, default=False, nullable=False)
 
+    # Nullable columns added in phase3 migration
+    scores_data = Column(JSONB, nullable=True)  # {"R": 80, "I": 60, ...} normalized
+    riasec_code = Column(String(3), nullable=True)  # cached code string e.g. "RIC"
+
     calculated_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+    # Relationship to RIASECCode for convenient access
+    riasec_code_obj = relationship(
+        "RIASECCode",
+        foreign_keys=[riasec_code_id],
+        lazy="select"
+    )
 
     __table_args__ = (
         CheckConstraint(

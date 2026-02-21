@@ -5,7 +5,7 @@ from typing import Dict, Any
 from app.api.v1.categories.career_profile.repositories.session_repo import SessionRepository
 from app.api.v1.categories.career_profile.repositories.profession_repo import ProfessionRepository
 from app.api.v1.categories.career_profile.models.result import CareerRecommendation, FitCheckResult
-from app.api.v1.categories.career_profile.models.riasec import RIASECResult, RIASECCode
+from app.api.v1.categories.career_profile.models.riasec import RIASECResult
 from app.api.v1.categories.career_profile.services.personality_service import PersonalityService
 from app.api.v1.categories.career_profile.services.fit_check_classifier import build_fit_check_explanation
 from app.db.models.user import User
@@ -34,16 +34,24 @@ class ResultService:
         if not riasec_res:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="RIASEC result not found.")
 
-        # Fetch the RIASECCode for title and description
-        riasec_code_obj = self.db.query(RIASECCode).filter(
-            RIASECCode.id == riasec_res.riasec_code_id
-        ).first()
-
-        riasec_title = riasec_code_obj.riasec_title if riasec_code_obj else riasec_res.riasec_code
+        # Use the relationship to get title/description (one query via lazy load)
+        riasec_code_obj = riasec_res.riasec_code_obj
+        riasec_code_str = riasec_res.riasec_code or (riasec_code_obj.riasec_code if riasec_code_obj else "")
+        riasec_title = riasec_code_obj.riasec_title if riasec_code_obj else riasec_code_str
         riasec_description = riasec_code_obj.riasec_description if riasec_code_obj else ""
 
+        # Build scores_data from individual columns if not cached
+        scores_data = riasec_res.scores_data or {
+            "R": riasec_res.score_r,
+            "I": riasec_res.score_i,
+            "A": riasec_res.score_a,
+            "S": riasec_res.score_s,
+            "E": riasec_res.score_e,
+            "C": riasec_res.score_c,
+        }
+
         about_text = await PersonalityService.get_personality_about_text(
-            riasec_code=riasec_res.riasec_code,
+            riasec_code=riasec_code_str,
             riasec_title=riasec_title,
             riasec_description=riasec_description,
             redis_client=_redis
@@ -51,8 +59,8 @@ class ResultService:
 
         return {
             "session_token": session_token,
-            "riasec_code": riasec_res.riasec_code,
-            "scores_data": riasec_res.scores_data,
+            "riasec_code": riasec_code_str,
+            "scores_data": scores_data,
             "about_personality": about_text
         }
 
