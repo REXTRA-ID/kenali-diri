@@ -56,18 +56,18 @@ ATURAN OUTPUT:
 - Struktur JSON wajib sama persis dengan format di bawah.
 
 FORMAT JSON OUTPUT:
-{
-  "ikigai_profile_summary": {
+{{
+  "ikigai_profile_summary": {{
     "what_you_love": "Teks ringkasan dimensi 1",
     "what_you_are_good_at": "Teks ringkasan dimensi 2",
     "what_the_world_needs": "Teks ringkasan dimensi 3",
     "what_you_can_be_paid_for": "Teks ringkasan dimensi 4"
-  },
-  "match_reasoning": {
+  }},
+  "match_reasoning": {{
     "{profession_1_id}": "Teks kecocokan profesi 1",
     "{profession_2_id}": "Teks kecocokan profesi 2"
-  }
-}
+  }}
+}}
 """
 
 def build_recommendation_narrative_prompt(

@@ -12,7 +12,7 @@ from app.api.v1.categories.career_profile.schemas.result import (
 from app.db.models.user import User
 
 router = APIRouter(
-    prefix="/result",
+    prefix="/career-profile/result",
     tags=["Career Profile - Result"]
 )
 

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 from app.api.v1.general.schemas import CategoryResponse
 
@@ -10,5 +10,4 @@ class HistoryResponse(BaseModel):
     started_at: datetime
     completed_at: datetime | None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

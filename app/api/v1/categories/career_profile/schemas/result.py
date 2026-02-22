@@ -6,7 +6,7 @@ class PersonalityResultResponse(BaseModel):
     session_token: str
     riasec_code: str
     scores_data: Dict[str, int]
-    about_personality: Dict[str, str]
+    about_personality: str
 
     model_config = ConfigDict(from_attributes=True)
 

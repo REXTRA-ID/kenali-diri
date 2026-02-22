@@ -75,19 +75,15 @@ class ResultService:
         # Get profession to fetch the title/code
         prof_data = None
         if session.target_profession_id:
-            prof = self.profession_repo.get_profession_by_id(
-                session.target_profession_id, session.id
-            )
-            if prof:
-                master_profs = self.profession_repo.get_master_professions_by_ids([prof.profession_id])
-                if master_profs:
-                    p = master_profs[0]
-                    prof_data = {
-                        "id": p.id,
-                        "title": p.title,
-                        "image_url": None,  # not in model yet
-                        "riasec_code": p.riasec_code.riasec_code if p.riasec_code else None
-                    }
+            from app.api.v1.categories.career_profile.models.digital_profession import DigitalProfession
+            p = self.db.query(DigitalProfession).filter(DigitalProfession.id == session.target_profession_id).first()
+            if p:
+                prof_data = {
+                    "id": p.id,
+                    "title": p.title,
+                    "image_url": None,  # not in model yet
+                    "riasec_code": p.riasec_code.riasec_code if p.riasec_code else None
+                }
 
         explanation = build_fit_check_explanation(
             match_category=fit_check.match_category,

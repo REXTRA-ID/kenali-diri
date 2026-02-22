@@ -484,7 +484,7 @@ class RIASECService:
         self._save_responses(session.id, responses)
 
         # 8. Simpan hasil klasifikasi
-        self._save_result(session.id, scores, code_obj.id, classification_type, is_inconsistent)
+        riasec_result = self._save_result(session.id, scores, code_obj.id, classification_type, is_inconsistent)
 
         # 9. Ekspansi kandidat profesi
         sorted_sc = sort_scores(scores)
@@ -511,7 +511,7 @@ class RIASECService:
 
         # 12. Tentukan next step dan update history jika FIT_CHECK
         if session.test_goal == "FIT_CHECK":
-            self._mark_fit_check_completed(session)
+            self._mark_fit_check_completed(session, riasec_result)
             next_step = "fit_check_result"
         else:
             next_step = "ikigai"
@@ -703,6 +703,8 @@ class RIASECService:
             is_inconsistent_profile=is_inconsistent
         )
         self.db.add(result)
+        self.db.flush()
+        return result
 
     def _save_candidates(
         self,
@@ -757,7 +759,7 @@ class RIASECService:
         session.status = "riasec_completed"
         session.riasec_completed_at = datetime.utcnow()
 
-    def _mark_fit_check_completed(self, session: CareerProfileTestSession):
+    def _mark_fit_check_completed(self, session: CareerProfileTestSession, riasec_result: RIASECResult):
         """
         Untuk FIT_CHECK: override status riasec_completed → completed sekaligus.
 
@@ -787,24 +789,17 @@ class RIASECService:
             history.completed_at = datetime.utcnow()
             
         # === TAMBAHAN BARU: INSERT fit_check_results ===
-        self._insert_fit_check_result(session)
+        self._insert_fit_check_result(session, riasec_result)
 
-    def _insert_fit_check_result(self, session: CareerProfileTestSession):
+    def _insert_fit_check_result(self, session: CareerProfileTestSession, riasec_result: RIASECResult):
         """
         Hitung rule-based classification dan INSERT ke fit_check_results.
         Dipanggil hanya untuk sesi FIT_CHECK setelah RIASEC selesai.
         """
         from app.api.v1.categories.career_profile.models.result import FitCheckResult
         from app.api.v1.categories.career_profile.services.fit_check_classifier import classify_fit_check
-        from app.api.v1.categories.career_profile.models.riasec import RIASECResult, RIASECCode
-        from app.api.v1.categories.career_profile.repositories.profession_repo import ProfessionRepository
-
-        # Ambil kode RIASEC user dari riasec_results
-        riasec_result = self.db.query(RIASECResult).filter(
-            RIASECResult.test_session_id == session.id
-        ).first()
-        if not riasec_result:
-            raise HTTPException(status_code=500, detail="riasec_results tidak ditemukan saat insert fit_check_results")
+        from app.api.v1.categories.career_profile.models.riasec import RIASECCode
+        from app.api.v1.categories.career_profile.models.digital_profession import DigitalProfession
 
         user_code_obj = self.db.query(RIASECCode).filter(
             RIASECCode.id == riasec_result.riasec_code_id
@@ -816,7 +811,9 @@ class RIASECService:
             )
 
         # Ambil kode RIASEC profesi target
-        profession = ProfessionRepository(self.db).get_by_id(session.target_profession_id)
+        profession = self.db.query(DigitalProfession).filter(
+            DigitalProfession.id == session.target_profession_id
+        ).first()
         if not profession:
             raise HTTPException(status_code=404, detail=f"Profesi target ID {session.target_profession_id} tidak ditemukan")
 

@@ -683,7 +683,7 @@ class IkigaiService:
         except Exception as e:
             logger.error(
                 "recommendation_narrative_failed",
-                error=str(e),
+                error=str(e), traceback=__import__("traceback").format_exc(),
                 session_id=session.id
             )
             # Non-fatal: scoring sudah selesai, narasi adalah best-effort

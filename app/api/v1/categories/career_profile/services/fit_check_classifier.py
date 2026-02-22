@@ -104,23 +104,66 @@ def classify_fit_check(
     }
 
 
-def build_fit_check_explanation(match_category: str, rule_type: str) -> str:
+def build_fit_check_explanation(match_category: str, rule_type: str) -> dict:
     """
-    Mengembalikan penjelasan singkat mengenai tingkat kecocokan profil dengan profesi.
+    Mengembalikan penjelasan terperinci mengenai tingkat kecocokan profil dengan profesi.
+    Terdiri dari meaning, reason_points, dan implication.
     """
     if match_category == "HIGH":
         if rule_type == "exact_match":
-            return "Profil kepribadian Anda sangat selaras dengan lingkungan dan tuntutan profesi ini. Anda memiliki potensi besar untuk menikmati, berprestasi, dan bertahan lama di bidang ini."
+            return {
+                "meaning": "Sangat Cocok",
+                "reason_points": [
+                    "Karakter kepribadian Anda selaras dengan profesi ini",
+                    "Kecenderungan alami Anda sangat relevan dengan tuntutan pekerjaan"
+                ],
+                "implication": "Anda memiliki potensi besar untuk menikmati, berprestasi, dan bertahan lama di bidang ini."
+            }
         else:
-            return "Karakter dominan Anda sangat cocok dengan profesi ini, dan elemen pendukungnya saling melengkapi. Ini adalah pilihan arah karier yang sangat direkomendasikan untuk Anda."
+            return {
+                "meaning": "Cocok (Kombinasi Sesuai)",
+                "reason_points": [
+                    "Karakter dominan Anda sangat selaras dengan profesi ini",
+                    "Elemen pendukungnya saling melengkapi dengan baik"
+                ],
+                "implication": "Ini adalah pilihan arah karier yang sangat direkomendasikan untuk Anda."
+            }
     
     elif match_category == "MEDIUM":
         if rule_type == "dominant_same":
-            return "Ketertarikan utama Anda sejalan dengan fokus utama profesi ini, namun ada beberapa aktivitas pendukung di pekerjaan ini yang mungkin kurang mencerminkan gaya alami Anda. Penyesuaian di beberapa kondisi akan diperlukan."
+            return {
+                "meaning": "Cukup Cocok (Fokus Utama Sesuai)",
+                "reason_points": [
+                    "Ketertarikan utama Anda sejalan dengan fokus utama profesi ini",
+                    "Beberapa aktivitas pendukung mungkin kurang mencerminkan gaya alami Anda"
+                ],
+                "implication": "Penyesuaian di beberapa kondisi akan diperlukan untuk mencapai kepuasan optimal."
+            }
         elif rule_type == "adjacent_dominant":
-            return "Terdapat relevansi yang cukup kuat antara kepribadian Anda dan tuntutan kerja profesi ini. Meskipun bukan kombinasi paling ideal, Anda tetap dapat menemukan kepuasan melalui adaptasi fokus kerja."
+            return {
+                "meaning": "Cukup Cocok (Karakter Berdekatan)",
+                "reason_points": [
+                    "Terdapat relevansi yang cukup kuat antara kepribadian Anda dan tuntutan kerja",
+                    "Bukan kombinasi paling ideal secara teori"
+                ],
+                "implication": "Anda tetap dapat menemukan kepuasan melalui adaptasi terhadap fokus pekerjaan."
+            }
         else:
-            return "Meskipun ada titik temu, profil Anda mungkin membutuhkan proses belajar dan pembiasaan ekstra di lingkungan kerja ini."
+            return {
+                "meaning": "Berpotensi Cocok",
+                "reason_points": [
+                    "Ada titik temu antara minat Anda dan profesi ini",
+                    "Banyak ruang perbedaan yang perlu dijembatani"
+                ],
+                "implication": "Profil Anda mungkin membutuhkan proses belajar dan pembiasaan ekstra di lingkungan kerja ini."
+            }
             
     else:  # LOW
-        return "Karakter alami dan minat Anda memiliki banyak perbedaan fundamental dengan rutinitas profesi ini. Lingkungan kerjanya mungkin cepat membuat Anda bosan atau merasa kehabisan energi. Apabila Anda memilih untuk berkarier di sini, bersiaplah untuk beradaptasi terhadap tugas yang bisa jadi tidak selaras dengan zona nyaman Anda."
+        return {
+            "meaning": "Kurang Cocok",
+            "reason_points": [
+                "Karakter alami dan minat Anda memiliki banyak perbedaan fundamental",
+                "Lingkungan kerjanya mungkin cepat membuat Anda bosan atau kehabisan energi"
+            ],
+            "implication": "Apabila Anda memilih untuk berkarier di sini, bersiaplah untuk beradaptasi terhadap tugas yang bisa jadi tidak selaras dengan zona nyaman Anda."
+        }

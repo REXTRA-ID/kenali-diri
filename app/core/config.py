@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     APP_NAME: str
@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # OpenRouter AI
     OPENROUTER_API_KEY: str
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
-    OPENROUTER_MODEL: str = "google/gemini-3.0-flash"
+    OPENROUTER_MODEL: str = "google/gemini-3-flash-preview"
 
     # AI Settings
     AI_MAX_TOKENS: int = 2000
@@ -31,8 +31,6 @@ class Settings(BaseSettings):
     SENTRY_DSN: str | None = None
     LOG_LEVEL: str = "INFO"
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 settings = Settings()

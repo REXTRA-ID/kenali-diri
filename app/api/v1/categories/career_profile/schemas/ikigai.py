@@ -9,7 +9,7 @@ The Ikigai framework evaluates 4 dimensions:
 - World Needs (What the world needs)
 - Paid For (What you can be paid for)
 """
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
@@ -28,8 +28,9 @@ class IkigaiDimensionInput(BaseModel):
         description="User's essay response for this dimension (10-2000 chars)"
     )
     
-    @validator('text_input')
-    def validate_not_empty(cls, v):
+    @field_validator('text_input')
+    @classmethod
+    def validate_not_empty(cls, v: str) -> str:
         if not v or v.strip() == "":
             raise ValueError("Essay cannot be empty or whitespace only")
         return v.strip()
@@ -100,8 +101,7 @@ class DimensionScoreDetail(BaseModel):
     final_score: float = Field(..., ge=0.0, le=1.0)
     analysis: Optional[str] = Field(default=None, description="AI analysis summary")
     
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ProfessionIkigaiScore(BaseModel):
@@ -205,21 +205,24 @@ class SubmitDimensionRequest(BaseModel):
     selection_type: str          # "selected" | "not_selected"
     reasoning_text: str
 
-    @validator("dimension_name")
-    def validate_dimension(cls, v):
+    @field_validator("dimension_name")
+    @classmethod
+    def validate_dimension(cls, v: str) -> str:
         valid = {"what_you_love", "what_you_are_good_at", "what_the_world_needs", "what_you_can_be_paid_for"}
         if v not in valid:
             raise ValueError(f"dimension_name tidak valid. Pilih dari: {valid}")
         return v
 
-    @validator("selection_type")
-    def validate_selection_type(cls, v):
+    @field_validator("selection_type")
+    @classmethod
+    def validate_selection_type(cls, v: str) -> str:
         if v not in {"selected", "not_selected"}:
             raise ValueError("selection_type harus 'selected' atau 'not_selected'")
         return v
 
-    @validator("reasoning_text")
-    def validate_reasoning(cls, v):
+    @field_validator("reasoning_text")
+    @classmethod
+    def validate_reasoning(cls, v: str) -> str:
         if len(v.strip()) < 10:
             raise ValueError("reasoning_text minimal 10 karakter")
         return v.strip()

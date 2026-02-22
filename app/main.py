@@ -25,6 +25,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler"""
+    logger.info("Starting Career Profile API...")
+    
+    # Create database tables if they don't exist
+    # NOTE: In production, use Alembic migrations instead
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables verified/created")
+    except Exception as e:
+        logger.error(f"Failed to create tables: {str(e)}")
+    
+    logger.info("Career Profile API started successfully")
+    
+    yield
+    
+    logger.info("Shutting down Career Profile API...")
+
+
 # Create FastAPI application
 app = FastAPI(
     title="Career Profile API",
@@ -32,7 +54,8 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
-    openapi_url="/openapi.json"
+    openapi_url="/openapi.json",
+    lifespan=lifespan
 )
 
 # CORS Configuration
@@ -87,29 +110,6 @@ async def general_exception_handler(request: Request, exc: Exception):
             "error": str(exc)
         }
     )
-
-
-# Startup and shutdown events
-@app.on_event("startup")
-async def startup_event():
-    """Run on application startup"""
-    logger.info("Starting Career Profile API...")
-    
-    # Create database tables if they don't exist
-    # NOTE: In production, use Alembic migrations instead
-    try:
-        Base.metadata.create_all(bind=engine)
-        logger.info("Database tables verified/created")
-    except Exception as e:
-        logger.error(f"Failed to create tables: {str(e)}")
-    
-    logger.info("Career Profile API started successfully")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Run on application shutdown"""
-    logger.info("Shutting down Career Profile API...")
 
 
 # Root endpoint
