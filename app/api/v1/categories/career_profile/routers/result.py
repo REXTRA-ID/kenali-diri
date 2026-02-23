@@ -33,7 +33,7 @@ async def get_personality_result(
     Get RIASEC scores and the generated personality description from AI.
     """
     service = ResultService(db)
-    return await service.get_personality_result(current_user, session_token)
+    return await service.get_personality_result(session_token, current_user)
 
 
 @router.get(
@@ -52,7 +52,7 @@ async def get_fit_check_result(
     Get rule-based classification of Fit Check based on Holland Hexagon match.
     """
     service = ResultService(db)
-    return await service.get_fit_check_result(current_user, session_token)
+    return await service.get_fit_check_result(session_token, current_user)
 
 
 @router.get(
@@ -71,4 +71,4 @@ async def get_recommendation_result(
     Get the top 2 profession recommendation narratives and Ikigai dimension summary.
     """
     service = ResultService(db)
-    return await service.get_recommendation_result(current_user, session_token)
+    return await service.get_recommendation_result(session_token, current_user)

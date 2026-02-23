@@ -274,6 +274,22 @@ class ProfessionRepository:
             .all()
         )
 
+    def get_by_id(self, profession_id: int) -> Optional[Profession]:
+        """
+        Ambil satu Profession dari tabel relasional berdasarkan ID.
+        Dipakai oleh result_service.get_fit_check_result untuk nama profesi target.
+        """
+        return self.db.query(Profession).filter(Profession.id == profession_id).first()
+
+    def get_by_ids(self, profession_ids: List[int]) -> List[Profession]:
+        """
+        Ambil beberapa Profession dari tabel relasional berdasarkan list ID.
+        Dipakai oleh result_service.get_recommendation_result untuk enrich nama kandidat.
+        """
+        if not profession_ids:
+            return []
+        return self.db.query(Profession).filter(Profession.id.in_(profession_ids)).all()
+
     # ──────────────────────────────────────────────────────────────────────────
     # IKIGAI CANDIDATE PROFESSIONS (JSONB) — tidak berubah
     # ──────────────────────────────────────────────────────────────────────────
