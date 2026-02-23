@@ -1,553 +1,361 @@
 # app/api/v1/categories/career_profile/repositories/profession_repo.py
+
 from typing import List, Optional
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from fastapi import HTTPException, status
 
 from app.api.v1.categories.career_profile.models.profession import IkigaiCandidateProfession
-from app.api.v1.categories.career_profile.models.digital_profession import DigitalProfession
+
+# === Model relasional dari brief Jelajah Profesi ===
+# Import dari lokasi model Jelajah Profesi yang sudah ada di project
+from app.models.profession import Profession
+from app.models.profession_activity import ProfessionActivity
+from app.models.profession_skill_rel import ProfessionSkillRel
+from app.models.profession_tool_rel import ProfessionToolRel
+from app.models.profession_career_path import ProfessionCareerPath
+from app.models.skill import Skill
+from app.models.tool import Tool
 from app.api.v1.categories.career_profile.models.riasec import RIASECCode
-
-
-class Profession:
-    """
-    Data class representing a profession from JSONB candidates_data
-    """
-    def __init__(self, data: dict):
-        self.id = data.get('profession_id')
-        self.profession_id = data.get('profession_id')
-        self.riasec_code_id = data.get('riasec_code_id')
-        self.expansion_tier = data.get('expansion_tier')
-        self.congruence_type = data.get('congruence_type')
-        self.congruence_score = data.get('congruence_score')
-        self.display_order = data.get('display_order')
-        self.matched_code = data.get('matched_code')
-    
-    def to_dict(self) -> dict:
-        """Convert to dictionary"""
-        return {
-            'profession_id': self.profession_id,
-            'riasec_code_id': self.riasec_code_id,
-            'expansion_tier': self.expansion_tier,
-            'congruence_type': self.congruence_type,
-            'congruence_score': self.congruence_score,
-            'display_order': self.display_order,
-            'matched_code': self.matched_code
-        }
 
 
 class ProfessionRepository:
     """
-    Repository for querying profession data from IkigaiCandidateProfession JSONB
-    
-    This repository extracts profession candidates from the candidates_data JSONB column
-    based on various filtering criteria like riasec_code_id, profession_id, etc.
+    Repository untuk query data profesi.
+
+    Sumber data:
+      - Tabel relasional `professions` + relasi (dari brief Jelajah Profesi)
+        → untuk context AI scoring, generate konten Ikigai, narasi rekomendasi
+      - Tabel `ikigai_candidate_professions` (JSONB)
+        → untuk manajemen kandidat per sesi tes
     """
-    
+
     def __init__(self, db: Session):
         self.db = db
-    
-    def get_master_professions_by_riasec_code_id(
-        self,
-        riasec_code_id: int,
-        limit: int = 10
-    ) -> List[DigitalProfession]:
-        """Query actual digital professions from the master table"""
-        return self.db.query(DigitalProfession).filter(
-            DigitalProfession.riasec_code_id == riasec_code_id
-        ).limit(limit).all()
 
-    def get_master_professions_by_ids(
-        self,
-        profession_ids: List[int]
-    ) -> List[DigitalProfession]:
-        """Query actual digital professions by multiple IDs"""
-        return self.db.query(DigitalProfession).filter(
-            DigitalProfession.id.in_(profession_ids)
-        ).all()
+    # ──────────────────────────────────────────────────────────────────────────
+    # PROFESSION CONTEXT QUERIES (untuk pipeline Ikigai)
+    # Semua method di bawah query dari tabel relasional — bukan DigitalProfession
+    # ──────────────────────────────────────────────────────────────────────────
 
-    def get_master_professions_by_riasec_code_ids(
-        self,
-        riasec_code_ids: List[int],
-        limit: int = 20
-    ) -> List[DigitalProfession]:
-        """Query actual digital professions by multiple RIASEC code IDs"""
-        return self.db.query(DigitalProfession).filter(
-            DigitalProfession.riasec_code_id.in_(riasec_code_ids)
-        ).limit(limit).all()
+    def get_profession_contexts_for_ikigai(
+        self, profession_ids: List[int]
+    ) -> List[dict]:
+        """
+        Query konteks profesi untuk generate narasi konten display Ikigai (5 kandidat).
+
+        Dipakai oleh: IkigaiService._generate_ikigai_content()
+
+        Data yang diambil:
+          - professions: id, name, about_description, riasec_description
+          - riasec_codes (via FK riasec_code_id): riasec_code, riasec_title, riasec_description
+          - profession_activities: 5 aktivitas teratas (sort_order ASC)
+          - profession_skill_rels → skills: 5 hard skill wajib teratas
+          - profession_skill_rels → skills: 3 soft skill teratas
+          - profession_tool_rels → tools: 4 tool wajib teratas
+
+        Returns:
+            List[dict] — setiap dict adalah profession_context siap pakai di prompt AI
+        """
+        if not profession_ids:
+            return []
+
+        try:
+            professions = (
+                self.db.query(Profession)
+                .options(
+                    joinedload(Profession.activities),
+                    joinedload(Profession.skill_rels).joinedload(ProfessionSkillRel.skill),
+                    joinedload(Profession.tool_rels).joinedload(ProfessionToolRel.tool),
+                )
+                .filter(Profession.id.in_(profession_ids))
+                .all()
+            )
+
+            # Ambil riasec_code string per profesi via join terpisah
+            # (riasec_code_id ada di Profession, tapi relasinya tidak di-declare di model Jelajah Profesi)
+            riasec_map = self._get_riasec_map(profession_ids)
+
+            result = []
+            for p in professions:
+                activities = sorted(p.activities, key=lambda a: a.sort_order)[:5]
+                hard_skills = [
+                    rel.skill.name
+                    for rel in p.skill_rels
+                    if rel.skill_type == "hard" and rel.priority == "wajib"
+                ][:5]
+                soft_skills = [
+                    rel.skill.name
+                    for rel in p.skill_rels
+                    if rel.skill_type == "soft"
+                ][:3]
+                tools = [
+                    rel.tool.name
+                    for rel in p.tool_rels
+                    if rel.usage_type == "wajib"
+                ][:4]
+
+                rc = riasec_map.get(p.riasec_code_id, {})
+                result.append({
+                    "profession_id": p.id,
+                    "name": p.name,
+                    "riasec_code": rc.get("riasec_code", "-"),
+                    "riasec_title": rc.get("riasec_title", "-"),
+                    "about_description": (p.about_description or "")[:400],
+                    "riasec_description": p.riasec_description or "",
+                    "activities": [a.description for a in activities],
+                    "hard_skills_required": hard_skills,
+                    "soft_skills_required": soft_skills,
+                    "tools_required": tools,
+                })
+
+            return result
+
+        except SQLAlchemyError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Gagal query profession contexts for ikigai: {str(e)}",
+            )
+
+    def get_profession_contexts_for_scoring(
+        self, profession_ids: List[int]
+    ) -> List[dict]:
+        """
+        Query konteks profesi yang lebih ringkas untuk AI scoring prompt (semua kandidat).
+
+        Dipakai oleh: IkigaiService._finalize_ikigai() — STEP 3 (Gemini scoring)
+
+        Data yang diambil:
+          - professions: id, name, about_description
+          - profession_activities: 5 aktivitas teratas
+          - profession_skill_rels → skills: 3 hard skill wajib teratas
+            (lebih sedikit dari ikigai content — scoring prompt lebih singkat)
+
+        Returns:
+            List[dict] — setiap dict adalah profession_context untuk scoring prompt
+        """
+        if not profession_ids:
+            return []
+
+        try:
+            professions = (
+                self.db.query(Profession)
+                .options(
+                    joinedload(Profession.activities),
+                    joinedload(Profession.skill_rels).joinedload(ProfessionSkillRel.skill),
+                )
+                .filter(Profession.id.in_(profession_ids))
+                .all()
+            )
+
+            result = []
+            for p in professions:
+                activities = sorted(p.activities, key=lambda a: a.sort_order)[:5]
+                hard_skills = [
+                    rel.skill.name
+                    for rel in p.skill_rels
+                    if rel.skill_type == "hard" and rel.priority == "wajib"
+                ][:3]
+
+                result.append({
+                    "profession_id": p.id,
+                    "name": p.name,
+                    "about_description": (p.about_description or "")[:300],
+                    "activities": [a.description for a in activities],
+                    "hard_skills_required": hard_skills,
+                })
+
+            return result
+
+        except SQLAlchemyError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Gagal query profession contexts for scoring: {str(e)}",
+            )
+
+    def get_profession_contexts_for_recommendation(
+        self, profession_ids: List[int]
+    ) -> List[dict]:
+        """
+        Query konteks profesi lengkap untuk generate narasi rekomendasi akhir (top-2).
+
+        Dipakai oleh: IkigaiService._finalize_ikigai() — STEP 10 (narasi rekomendasi)
+
+        Data yang diambil (paling lengkap dari tiga method):
+          - professions: id, name, about_description, riasec_description
+          - riasec_codes: riasec_code, riasec_title
+          - profession_activities: 5 aktivitas teratas
+          - profession_skill_rels → skills: 5 hard skill wajib teratas
+          - profession_career_paths: entry_level dan senior_level (salary_min, salary_max)
+            → ini yang selama ini hilang di DigitalProfession — sekarang tersedia
+
+        Returns:
+            List[dict] — setiap dict adalah profession_context untuk prompt narasi rekomendasi
+        """
+        if not profession_ids:
+            return []
+
+        try:
+            professions = (
+                self.db.query(Profession)
+                .options(
+                    joinedload(Profession.activities),
+                    joinedload(Profession.skill_rels).joinedload(ProfessionSkillRel.skill),
+                    joinedload(Profession.career_paths),
+                )
+                .filter(Profession.id.in_(profession_ids))
+                .all()
+            )
+
+            riasec_map = self._get_riasec_map(profession_ids)
+
+            result = []
+            for p in professions:
+                activities = sorted(p.activities, key=lambda a: a.sort_order)[:5]
+                hard_skills = [
+                    rel.skill.name
+                    for rel in p.skill_rels
+                    if rel.skill_type == "hard" and rel.priority == "wajib"
+                ][:5]
+                career_paths = sorted(p.career_paths, key=lambda cp: cp.sort_order)
+
+                # Entry level = career_path sort_order pertama (junior)
+                # Senior level = career_path sort_order terakhir
+                entry_level = career_paths[0] if career_paths else None
+                senior_level = career_paths[-1] if len(career_paths) > 1 else None
+
+                rc = riasec_map.get(p.riasec_code_id, {})
+                result.append({
+                    "profession_id": p.id,
+                    "name": p.name,
+                    "riasec_code": rc.get("riasec_code", "-"),
+                    "riasec_title": rc.get("riasec_title", "-"),
+                    "about_description": p.about_description or "-",
+                    "riasec_description": p.riasec_description or "-",
+                    "activities": [a.description for a in activities],
+                    "hard_skills_required": hard_skills,
+                    # Data gaji dari profession_career_paths — tersedia karena pakai tabel relasional
+                    "entry_level_path": {
+                        "title": entry_level.title,
+                        "experience_range": entry_level.experience_range,
+                        "salary_min": entry_level.salary_min,
+                        "salary_max": entry_level.salary_max,
+                    } if entry_level else None,
+                    "senior_level_path": {
+                        "title": senior_level.title,
+                        "experience_range": senior_level.experience_range,
+                        "salary_min": senior_level.salary_min,
+                        "salary_max": senior_level.salary_max,
+                    } if senior_level else None,
+                })
+
+            return result
+
+        except SQLAlchemyError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Gagal query profession contexts for recommendation: {str(e)}",
+            )
 
     def find_by_riasec_code(
-        self,
-        riasec_code: str,
-        limit: int = 30
-    ) -> List[DigitalProfession]:
+        self, riasec_code: str, limit: int = 30
+    ) -> List[Profession]:
         """
-        Cari DigitalProfession berdasarkan string kode RIASEC (e.g. 'RIA', 'RI', 'R').
-        Digunakan oleh riasec_service.py saat ekspansi kandidat profesi (Tier 1-4).
-        Melakukan JOIN DigitalProfession → RIASECCode.
+        Cari Profession berdasarkan string kode RIASEC (misal 'RIA', 'RI', 'R').
+        Digunakan oleh riasec_service saat ekspansi kandidat profesi (Tier 1–4).
+
+        Menggantikan method lama find_by_riasec_code yang query DigitalProfession.
         """
         return (
-            self.db.query(DigitalProfession)
-            .join(RIASECCode, DigitalProfession.riasec_code_id == RIASECCode.id)
+            self.db.query(Profession)
+            .join(RIASECCode, Profession.riasec_code_id == RIASECCode.id)
             .filter(RIASECCode.riasec_code == riasec_code)
             .limit(limit)
             .all()
         )
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # IKIGAI CANDIDATE PROFESSIONS (JSONB) — tidak berubah
+    # ──────────────────────────────────────────────────────────────────────────
 
-    def get_professions_by_code_id(
-        self,
-        riasec_code_id: int,
-        test_session_id: Optional[int] = None
-    ) -> List[Profession]:
+    def get_candidates_by_session_id(
+        self, test_session_id: int
+    ) -> Optional[IkigaiCandidateProfession]:
+        """Ambil data kandidat profesi berdasarkan test_session_id."""
+        try:
+            return (
+                self.db.query(IkigaiCandidateProfession)
+                .filter(IkigaiCandidateProfession.test_session_id == test_session_id)
+                .first()
+            )
+        except SQLAlchemyError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Gagal mengambil data kandidat: {str(e)}",
+            )
 
-        """
-        Query professions by RIASEC code ID from JSONB candidates_data
-        
-        Args:
-            riasec_code_id: The RIASEC code ID to filter by
-            test_session_id: Optional test session ID to narrow search
-            
-        Returns:
-            List[Profession]: List of matching professions
-            
-        Example JSONB structure:
-            {
-                "candidates": [
-                    {
-                        "profession_id": 10,
-                        "riasec_code_id": 49,
-                        "expansion_tier": 1,
-                        "congruence_type": "exact_match",
-                        "congruence_score": 1.0,
-                        "display_order": 1
-                    }
-                ]
-            }
-        """
-        try:
-            query = self.db.query(IkigaiCandidateProfession)
-            
-            if test_session_id:
-                query = query.filter(
-                    IkigaiCandidateProfession.test_session_id == test_session_id
-                )
-            
-            records = query.all()
-            
-            professions = []
-            for record in records:
-                candidates_data = record.candidates_data
-                if candidates_data and 'candidates' in candidates_data:
-                    for candidate in candidates_data['candidates']:
-                        if candidate.get('riasec_code_id') == riasec_code_id:
-                            professions.append(Profession(candidate))
-            
-            return professions
-            
-        except SQLAlchemyError as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to retrieve professions by code ID: {str(e)}"
-            )
-    
-    def get_professions_by_code_ids(
-        self,
-        code_ids: List[int],
-        test_session_id: Optional[int] = None,
-        limit: Optional[int] = None
-    ) -> List[Profession]:
-        """
-        Query professions by multiple RIASEC code IDs from JSONB
-        Useful for tier 2 expansion (congruent codes)
-        
-        Args:
-            code_ids: List of RIASEC code IDs
-            test_session_id: Optional test session ID to narrow search
-            limit: Optional limit on number of results
-            
-        Returns:
-            List[Profession]: List of matching professions
-        """
-        try:
-            if not code_ids:
-                return []
-            
-            query = self.db.query(IkigaiCandidateProfession)
-            
-            if test_session_id:
-                query = query.filter(
-                    IkigaiCandidateProfession.test_session_id == test_session_id
-                )
-            
-            records = query.all()
-            
-            professions = []
-            for record in records:
-                candidates_data = record.candidates_data
-                if candidates_data and 'candidates' in candidates_data:
-                    for candidate in candidates_data['candidates']:
-                        if candidate.get('riasec_code_id') in code_ids:
-                            professions.append(Profession(candidate))
-                            
-                            # Apply limit if specified
-                            if limit and len(professions) >= limit:
-                                return professions
-            
-            return professions
-            
-        except SQLAlchemyError as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to retrieve professions by code IDs: {str(e)}"
-            )
-    
-    def get_profession_by_id(
-        self,
-        profession_id: int,
-        test_session_id: Optional[int] = None
-    ) -> Profession:
-        """
-        Query single profession by ID from JSONB candidates_data
-        
-        Args:
-            profession_id: The profession ID
-            test_session_id: Optional test session ID to narrow search
-            
-        Returns:
-            Profession: The profession object
-            
-        Raises:
-            HTTPException: If profession not found
-        """
-        try:
-            query = self.db.query(IkigaiCandidateProfession)
-            
-            if test_session_id:
-                query = query.filter(
-                    IkigaiCandidateProfession.test_session_id == test_session_id
-                )
-            
-            records = query.all()
-            
-            for record in records:
-                candidates_data = record.candidates_data
-                if candidates_data and 'candidates' in candidates_data:
-                    for candidate in candidates_data['candidates']:
-                        if candidate.get('profession_id') == profession_id:
-                            return Profession(candidate)
-            
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Profession {profession_id} not found in candidates data"
-            )
-            
-        except SQLAlchemyError as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to retrieve profession: {str(e)}"
-            )
-    
-    def get_professions_by_ids(
-        self,
-        profession_ids: List[int],
-        test_session_id: Optional[int] = None
-    ) -> List[Profession]:
-        """
-        Query multiple professions by their IDs from JSONB
-        
-        Args:
-            profession_ids: List of profession IDs
-            test_session_id: Optional test session ID to narrow search
-            
-        Returns:
-            List[Profession]: List of matching professions
-        """
-        try:
-            if not profession_ids:
-                return []
-            
-            query = self.db.query(IkigaiCandidateProfession)
-            
-            if test_session_id:
-                query = query.filter(
-                    IkigaiCandidateProfession.test_session_id == test_session_id
-                )
-            
-            records = query.all()
-            
-            professions = []
-            for record in records:
-                candidates_data = record.candidates_data
-                if candidates_data and 'candidates' in candidates_data:
-                    for candidate in candidates_data['candidates']:
-                        if candidate.get('profession_id') in profession_ids:
-                            professions.append(Profession(candidate))
-            
-            return professions
-            
-        except SQLAlchemyError as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to retrieve professions by IDs: {str(e)}"
-            )
-    
-    def get_professions_by_tier(
-        self,
-        tier: int,
-        test_session_id: Optional[int] = None
-    ) -> List[Profession]:
-        """
-        Query professions by expansion tier from JSONB
-        
-        Args:
-            tier: Expansion tier (1-4)
-            test_session_id: Optional test session ID to narrow search
-            
-        Returns:
-            List[Profession]: List of professions from specified tier
-        """
-        try:
-            query = self.db.query(IkigaiCandidateProfession)
-            
-            if test_session_id:
-                query = query.filter(
-                    IkigaiCandidateProfession.test_session_id == test_session_id
-                )
-            
-            records = query.all()
-            
-            professions = []
-            for record in records:
-                candidates_data = record.candidates_data
-                if candidates_data and 'candidates' in candidates_data:
-                    for candidate in candidates_data['candidates']:
-                        if candidate.get('expansion_tier') == tier:
-                            professions.append(Profession(candidate))
-            
-            return professions
-            
-        except SQLAlchemyError as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to retrieve professions by tier: {str(e)}"
-            )
-    
-    def search_professions(
-        self,
-        congruence_type: Optional[str] = None,
-        min_score: Optional[float] = None,
-        test_session_id: Optional[int] = None,
-        limit: int = 20
-    ) -> List[Profession]:
-        """
-        Search professions with filters from JSONB
-        
-        Args:
-            congruence_type: Filter by congruence type (exact_match, congruent, subset, etc.)
-            min_score: Minimum congruence score
-            test_session_id: Optional test session ID to narrow search
-            limit: Maximum number of results
-            
-        Returns:
-            List[Profession]: List of matching professions
-        """
-        try:
-            query = self.db.query(IkigaiCandidateProfession)
-            
-            if test_session_id:
-                query = query.filter(
-                    IkigaiCandidateProfession.test_session_id == test_session_id
-                )
-            
-            records = query.all()
-            
-            professions = []
-            for record in records:
-                candidates_data = record.candidates_data
-                if candidates_data and 'candidates' in candidates_data:
-                    for candidate in candidates_data['candidates']:
-                        # Apply filters
-                        if congruence_type and candidate.get('congruence_type') != congruence_type:
-                            continue
-                        
-                        if min_score and candidate.get('congruence_score', 0) < min_score:
-                            continue
-                        
-                        professions.append(Profession(candidate))
-                        
-                        if len(professions) >= limit:
-                            return professions
-            
-            return professions
-            
-        except SQLAlchemyError as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to search professions: {str(e)}"
-            )
-    
-    def count_professions_by_code_id(
-        self,
-        riasec_code_id: int,
-        test_session_id: Optional[int] = None
-    ) -> int:
-        """
-        Count professions for a given RIASEC code from JSONB
-        
-        Args:
-            riasec_code_id: The RIASEC code ID
-            test_session_id: Optional test session ID to narrow search
-            
-        Returns:
-            int: Number of professions
-        """
-        try:
-            query = self.db.query(IkigaiCandidateProfession)
-            
-            if test_session_id:
-                query = query.filter(
-                    IkigaiCandidateProfession.test_session_id == test_session_id
-                )
-            
-            records = query.all()
-            
-            count = 0
-            for record in records:
-                candidates_data = record.candidates_data
-                if candidates_data and 'candidates' in candidates_data:
-                    for candidate in candidates_data['candidates']:
-                        if candidate.get('riasec_code_id') == riasec_code_id:
-                            count += 1
-            
-            return count
-            
-        except SQLAlchemyError as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to count professions: {str(e)}"
-            )
-    
-    # ============ CRUD Operations for IkigaiCandidateProfession ============
-    
     def create_candidates(
         self,
         test_session_id: int,
-        candidates_data: dict
+        candidates_data: dict,
+        total_candidates: int,
+        generation_strategy: str,
+        max_candidates_limit: int = 30,
     ) -> IkigaiCandidateProfession:
         """
-        Create new candidate professions record
-        
-        Args:
-            test_session_id: Foreign key to test session
-            candidates_data: JSONB data containing candidates and metadata
-            
-        Returns:
-            IkigaiCandidateProfession: Created record
+        Buat record kandidat profesi baru.
+        Menyertakan kolom denormalisasi sesuai model yang sudah diperbaiki
+        (total_candidates, generation_strategy, max_candidates_limit).
         """
         try:
-            candidate_prof = IkigaiCandidateProfession(
+            record = IkigaiCandidateProfession(
                 test_session_id=test_session_id,
-                candidates_data=candidates_data
+                candidates_data=candidates_data,
+                total_candidates=total_candidates,
+                generation_strategy=generation_strategy,
+                max_candidates_limit=max_candidates_limit,
             )
-            self.db.add(candidate_prof)
+            self.db.add(record)
             self.db.commit()
-            self.db.refresh(candidate_prof)
-            return candidate_prof
-            
+            self.db.refresh(record)
+            return record
         except SQLAlchemyError as e:
             self.db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to create candidates: {str(e)}"
+                detail=f"Gagal membuat data kandidat: {str(e)}",
             )
-    
-    def get_candidates_by_session_id(
-        self,
-        test_session_id: int
-    ) -> Optional[IkigaiCandidateProfession]:
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # PRIVATE HELPERS
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _get_riasec_map(self, profession_ids: List[int]) -> dict:
         """
-        Get candidate professions by test session ID
-        
-        Args:
-            test_session_id: The test session ID
-            
-        Returns:
-            IkigaiCandidateProfession or None if not found
+        Ambil mapping riasec_code_id → {riasec_code, riasec_title} untuk
+        daftar profesi yang diberikan. Satu query untuk semua profesi (tidak N+1).
         """
-        try:
-            return self.db.query(IkigaiCandidateProfession).filter(
-                IkigaiCandidateProfession.test_session_id == test_session_id
-            ).first()
-            
-        except SQLAlchemyError as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to retrieve candidates: {str(e)}"
+        if not profession_ids:
+            return {}
+
+        rows = (
+            self.db.query(
+                Profession.riasec_code_id,
+                RIASECCode.riasec_code,
+                RIASECCode.riasec_title,
+                RIASECCode.riasec_description,
             )
-    
-    def update_candidates(
-        self,
-        test_session_id: int,
-        candidates_data: dict
-    ) -> IkigaiCandidateProfession:
-        """
-        Update existing candidate professions record
-        
-        Args:
-            test_session_id: The test session ID
-            candidates_data: Updated JSONB data
-            
-        Returns:
-            IkigaiCandidateProfession: Updated record
-        """
-        try:
-            candidate_prof = self.get_candidates_by_session_id(test_session_id)
-            
-            if not candidate_prof:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Candidates not found for session {test_session_id}"
-                )
-            
-            candidate_prof.candidates_data = candidates_data
-            self.db.commit()
-            self.db.refresh(candidate_prof)
-            return candidate_prof
-            
-        except SQLAlchemyError as e:
-            self.db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to update candidates: {str(e)}"
-            )
-    
-    def delete_candidates(self, test_session_id: int) -> bool:
-        """
-        Delete candidate professions record
-        
-        Args:
-            test_session_id: The test session ID
-            
-        Returns:
-            bool: True if deleted successfully
-        """
-        try:
-            candidate_prof = self.get_candidates_by_session_id(test_session_id)
-            
-            if not candidate_prof:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Candidates not found for session {test_session_id}"
-                )
-            
-            self.db.delete(candidate_prof)
-            self.db.commit()
-            return True
-            
-        except SQLAlchemyError as e:
-            self.db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to delete candidates: {str(e)}"
-            )
+            .join(RIASECCode, Profession.riasec_code_id == RIASECCode.id)
+            .filter(Profession.id.in_(profession_ids))
+            .filter(Profession.riasec_code_id.isnot(None))
+            .all()
+        )
+
+        return {
+            row.riasec_code_id: {
+                "riasec_code": row.riasec_code,
+                "riasec_title": row.riasec_title,
+                "riasec_description": row.riasec_description,
+            }
+            for row in rows
+        }

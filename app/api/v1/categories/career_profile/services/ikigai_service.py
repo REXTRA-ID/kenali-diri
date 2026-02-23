@@ -25,14 +25,12 @@ from app.db.models.user import User
 from app.shared.ai_client import gemini_client
 from app.shared.cache import redis_client
 from app.shared.scoring_utils import (
-    calculate_min_max_normalization,
     calculate_text_score,
     calculate_click_score,
 )
 from app.api.v1.categories.career_profile.services.recommendation_narrative_service import RecommendationNarrativeService
 from app.api.v1.categories.career_profile.models.result import CareerRecommendation
 from app.api.v1.categories.career_profile.models.riasec import RIASECResult
-from app.api.v1.categories.career_profile.models.digital_profession import DigitalProfession
 
 logger = structlog.get_logger()
 
@@ -149,32 +147,8 @@ class IkigaiService:
         # Ambil maksimal 5 kandidat dari display order 1..5
         top_candidates = [c for c in candidates_data['candidates'] if c.get('display_order', 99) <= 5]
 
-        # Fetch detail profesi dari DigitalProfession dengan eager load RIASEC code
         top_profession_ids = [c['profession_id'] for c in top_candidates]
-        master_profs_list = self.db.query(DigitalProfession).options(
-            joinedload(DigitalProfession.riasec_code)
-        ).filter(DigitalProfession.id.in_(top_profession_ids)).all()
-        master_prof_map: Dict[int, DigitalProfession] = {mp.id: mp for mp in master_profs_list}
-
-        # Prepare context for AI batch generate — sertakan data profesi lengkap
-        profession_contexts = []
-        for c in top_candidates:
-            pid = c['profession_id']
-            mp = master_prof_map.get(pid)
-            meta = mp.meta_data or {} if mp else {}
-            profession_contexts.append({
-                "profession_id": pid,
-                "name": mp.title if mp else c.get('profession_name', 'Unknown'),
-                "riasec_code": mp.riasec_code.riasec_code if (mp and mp.riasec_code) else "-",
-                "riasec_title": mp.riasec_code.riasec_title if (mp and mp.riasec_code) else "-",
-                "about_description": (mp.description or "")[:400] if mp else "",
-                "riasec_description": mp.riasec_code.riasec_description if (mp and mp.riasec_code) else "",
-                "activities": meta.get("work_activities", [])[:5],
-                "hard_skills_required": meta.get("hard_skills", [])[:5],
-                "soft_skills_required": meta.get("soft_skills", [])[:3],
-                "tools_required": meta.get("tech_stack", [])[:4],
-                "market_insights": meta.get("market_insights", [])[:2],
-            })
+        profession_contexts = self.profession_repo.get_profession_contexts_for_ikigai(top_profession_ids)
 
         ai_responses = await gemini_client.generate_ikigai_content(profession_contexts)
         
@@ -183,7 +157,6 @@ class IkigaiService:
         result_candidates = []
         for c in top_candidates:
             pid = c['profession_id']
-            mp = master_prof_map.get(pid)
             ai_data = ai_map.get(pid, {})
             # fallback jika gagal content
             what_you_love = ai_data.get('what_you_love', 'Deskripsi tidak tersedia.')
@@ -309,28 +282,8 @@ class IkigaiService:
         all_candidate_entries = candidate_record.candidates_data.get("candidates", [])
         all_profession_ids = [c["profession_id"] for c in all_candidate_entries]
 
-        # Ambil detail profesi dari tabel master + eager load RIASEC code (hindari N+1)
-        master_profs = self.db.query(DigitalProfession).options(
-            joinedload(DigitalProfession.riasec_code)
-        ).filter(
-            DigitalProfession.id.in_(all_profession_ids)
-        ).all()
-        prof_detail_map: Dict[int, DigitalProfession] = {mp.id: mp for mp in master_profs}
-
         # Build profession_contexts ringkas untuk scoring prompt
-        profession_contexts = []
-        for pid in all_profession_ids:
-            mp = prof_detail_map.get(pid)
-            if not mp:
-                continue
-            meta = mp.meta_data or {}
-            profession_contexts.append({
-                "profession_id": pid,
-                "name": mp.title or "Unknown",
-                "about_description": (mp.description or "")[:300],
-                "activities": meta.get("work_activities", []),
-                "hard_skills_required": meta.get("hard_skills", [])
-            })
+        profession_contexts = self.profession_repo.get_profession_contexts_for_scoring(all_profession_ids)
 
         if not profession_contexts:
             raise HTTPException(
@@ -601,20 +554,9 @@ class IkigaiService:
             top_2_scores = total_scores[:2]
             top_2_ids = [p["profession_id"] for p in top_2_scores]
 
-            # Fetch profesi detail Top-2 (sudah ada di prof_detail_map)
-            profession_details = []
-            for pid in top_2_ids:
-                mp = prof_detail_map.get(pid)
-                if mp:
-                    meta = mp.meta_data or {}
-                    profession_details.append({
-                        "profession_id": pid,
-                        "name": mp.title,
-                        "riasec_code": mp.riasec_code.riasec_code if mp.riasec_code else "-",
-                        "about_description": mp.description or "-",
-                        "activities": meta.get("work_activities", []),
-                        "hard_skills_required": meta.get("hard_skills", [])
-                    })
+            # Fetch profesi detail Top-2 menggunakan repo baru
+            profession_details = self.profession_repo.get_profession_contexts_for_recommendation(top_2_ids)
+            prof_detail_map = {item['profession_id']: item for item in profession_details}
 
             # Build ikigai responses dict (reasoning text per dimension)
             ikigai_responses_text = {
@@ -641,7 +583,7 @@ class IkigaiService:
             recommended_professions = []
             for rank, p in enumerate(top_2_scores, start=1):
                 pid = p["profession_id"]
-                mp = prof_detail_map.get(pid)
+                mp_dict = prof_detail_map.get(pid, {})
                 reasoning = narrative_data.get("match_reasoning", {}).get(str(pid), "")
                 recommended_professions.append({
                     "rank": rank,
@@ -651,7 +593,7 @@ class IkigaiService:
                     "match_reasoning": reasoning,
                     "riasec_alignment": {
                         "user_code": user_riasec_code,
-                        "profession_code": mp.riasec_code.riasec_code if (mp and mp.riasec_code) else "-",
+                        "profession_code": mp_dict.get("riasec_code", "-"),
                         "congruence_score": p.get("congruence_score", 0)
                     },
                     "score_breakdown": {

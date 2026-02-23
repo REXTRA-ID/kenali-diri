@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.api.v1.dependencies.auth import get_current_user
+from app.api.v1.dependencies.auth import require_active_membership
+from app.core.rate_limit import limiter
 from app.api.v1.categories.career_profile.services.result_service import ResultService
 from app.api.v1.categories.career_profile.schemas.result import (
     PersonalityResultResponse,
@@ -21,9 +22,11 @@ router = APIRouter(
     response_model=PersonalityResultResponse,
     summary="Get RIASEC Personality Result"
 )
+@limiter.limit("30/minute")
 async def get_personality_result(
+    request: Request,
     session_token: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_membership),
     db: Session = Depends(get_db)
 ):
     """
@@ -38,16 +41,18 @@ async def get_personality_result(
     response_model=FitCheckResultResponse,
     summary="Get Fit Check Classification Result"
 )
+@limiter.limit("30/minute")
 async def get_fit_check_result(
+    request: Request,
     session_token: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_membership),
     db: Session = Depends(get_db)
 ):
     """
     Get rule-based classification of Fit Check based on Holland Hexagon match.
     """
     service = ResultService(db)
-    return service.get_fit_check_result(current_user, session_token)
+    return await service.get_fit_check_result(current_user, session_token)
 
 
 @router.get(
@@ -55,13 +60,15 @@ async def get_fit_check_result(
     response_model=RecommendationResultResponse,
     summary="Get Final Career Recommendation Narrative"
 )
+@limiter.limit("30/minute")
 async def get_recommendation_result(
+    request: Request,
     session_token: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_membership),
     db: Session = Depends(get_db)
 ):
     """
     Get the top 2 profession recommendation narratives and Ikigai dimension summary.
     """
     service = ResultService(db)
-    return service.get_recommendation_result(current_user, session_token)
+    return await service.get_recommendation_result(current_user, session_token)

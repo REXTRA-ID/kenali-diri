@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     APP_NAME: str
     APP_VERSION: str
@@ -8,6 +9,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     SQLALCHEMY_POOL_SIZE: int = 20
     SQLALCHEMY_MAX_OVERFLOW: int = 40
+
+    # Pool recycle — recycle koneksi DB tiap 30 menit
+    # Penting untuk DB remote/online agar koneksi stale tidak menyebabkan error
+    # Brief RIASEC halaman 65 & 102: nilai 1800 (30 menit)
+    DB_POOL_RECYCLE: int = 1800
 
     # Redis
     REDIS_URL: str
@@ -32,5 +38,6 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
 
 settings = Settings()

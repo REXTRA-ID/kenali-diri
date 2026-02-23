@@ -17,8 +17,12 @@ class CareerRecommendation(Base):
         nullable=False,
         unique=True
     )
+    test_goal = Column(String(50), nullable=False, default="RECOMMENDATION")
     recommendations_data = Column(JSONB, nullable=False)
-    generated_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    top_profession1_id = Column(BigInteger, nullable=True)
+    top_profession2_id = Column(BigInteger, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    ai_model_used = Column(String(50), default="gemini-1.5-flash")
 
 
 class FitCheckResult(Base):
@@ -46,4 +50,4 @@ class FitCheckResult(Base):
     dominant_letter_same = Column(Boolean, nullable=False)
     is_adjacent_hexagon = Column(Boolean, nullable=False)
     match_score = Column(Numeric(4, 2), nullable=True)
-    generated_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())

@@ -287,6 +287,7 @@ class IkigaiContentResponse(BaseModel):
     session_token: str
     status: str
     generated_at: str
+    from_cache: bool = False
     regenerated: bool
     total_display_candidates: int
     message: str

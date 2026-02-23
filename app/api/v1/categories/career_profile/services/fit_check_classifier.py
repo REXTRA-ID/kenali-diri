@@ -94,6 +94,20 @@ def classify_fit_check(
             "match_score": match_score
         }
 
+    # === PERBAIKAN TEMUAN 1: CEK MEDIUM Kondisi C — tidak ada pasangan berlawanan ===
+    has_opposite = any(
+        RIASEC_DISTANCE.get((user_riasec_code[i], profession_riasec_code[i]), 0) >= 3
+        for i in range(min(len(user_riasec_code), len(profession_riasec_code)))
+    )
+    if not has_opposite:
+        return {
+            "match_category": "MEDIUM",
+            "rule_type": "close_profile",
+            "dominant_letter_same": False,
+            "is_adjacent_hexagon": is_adjacent,
+            "match_score": match_score,
+        }
+
     # === FALLBACK: LOW ===
     return {
         "match_category": "LOW",
@@ -104,66 +118,142 @@ def classify_fit_check(
     }
 
 
-def build_fit_check_explanation(match_category: str, rule_type: str) -> dict:
+def build_fit_check_explanation(
+    fit_result: dict,
+    user_code: str,
+    profession_code: str,
+) -> dict:
     """
-    Mengembalikan penjelasan terperinci mengenai tingkat kecocokan profil dengan profesi.
-    Terdiri dari meaning, reason_points, dan implication.
+    Generate teks penjelasan dinamis dari data fit_check_results.
+    Tidak menggunakan AI — semua berbasis rule.
+    Copywriting mengikuti template spesifikasi UI per kondisi.
     """
-    if match_category == "HIGH":
+    category  = fit_result["match_category"]
+    rule_type = fit_result["rule_type"]
+
+    user_dominant = user_code[0] if user_code else "?"
+    prof_dominant = profession_code[0] if profession_code else "?"
+    user_set_str  = ", ".join(sorted(user_code))  # misal "C, I, R"
+
+    MATCH_LABELS = {
+        "HIGH":   "Kecocokan Tinggi",
+        "MEDIUM": "Kecocokan Sedang",
+        "LOW":    "Kecocokan Rendah",
+    }
+    MATCH_STARS = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
+
+    if category == "HIGH":
         if rule_type == "exact_match":
-            return {
-                "meaning": "Sangat Cocok",
-                "reason_points": [
-                    "Karakter kepribadian Anda selaras dengan profesi ini",
-                    "Kecenderungan alami Anda sangat relevan dengan tuntutan pekerjaan"
-                ],
-                "implication": "Anda memiliki potensi besar untuk menikmati, berprestasi, dan bertahan lama di bidang ini."
-            }
-        else:
-            return {
-                "meaning": "Cocok (Kombinasi Sesuai)",
-                "reason_points": [
-                    "Karakter dominan Anda sangat selaras dengan profesi ini",
-                    "Elemen pendukungnya saling melengkapi dengan baik"
-                ],
-                "implication": "Ini adalah pilihan arah karier yang sangat direkomendasikan untuk Anda."
-            }
-    
-    elif match_category == "MEDIUM":
+            reason_points = [
+                f"Profil karier berkode {user_code} dan profesi ini juga berkode {profession_code}.",
+                f"Kode identik menunjukkan keselarasan penuh — minat utama ({user_dominant}) "
+                f"dan seluruh pola aktivitas kerja berada pada spektrum yang sama.",
+            ]
+        else:  # permutation_match
+            reason_points = [
+                f"Profil karier berkode {user_code} dan profesi ini berkode {profession_code}.",
+                f"Huruf dominan sama ({user_dominant}) dan komposisi tiga huruf identik "
+                f"({user_set_str}), sehingga menunjukkan keselarasan minat utama dan pendukung.",
+            ]
+        meaning = (
+            "Kecocokan Tinggi menunjukkan bahwa minat dominan dan minat pendukung selaras "
+            "dengan karakter utama profesi. Hal ini menandakan tingkat kesesuaian yang kuat "
+            "antara profil karier dan aktivitas kerja yang dituntut profesi tersebut."
+        )
+        implication   = "Profesi ini layak diprioritaskan sebagai tujuan pengembangan."
+        next_steps    = [
+            "Perkuat kompetensi inti yang dibutuhkan profesi.",
+            "Bangun pengalaman melalui proyek, magang, atau portofolio.",
+            "Susun rencana pengembangan yang terarah.",
+        ]
+        cta_primary   = "Buat Rencana"
+        cta_secondary = None
+
+    elif category == "MEDIUM":
         if rule_type == "dominant_same":
-            return {
-                "meaning": "Cukup Cocok (Fokus Utama Sesuai)",
-                "reason_points": [
-                    "Ketertarikan utama Anda sejalan dengan fokus utama profesi ini",
-                    "Beberapa aktivitas pendukung mungkin kurang mencerminkan gaya alami Anda"
-                ],
-                "implication": "Penyesuaian di beberapa kondisi akan diperlukan untuk mencapai kepuasan optimal."
-            }
+            user_set  = set(user_code)
+            prof_set  = set(profession_code)
+            diff_user = user_set - prof_set
+            diff_prof = prof_set - user_set
+            diff_str  = ""
+            if diff_user and diff_prof:
+                diff_str = (
+                    f" Huruf {', '.join(sorted(diff_user))} pada profil "
+                    f"digantikan {', '.join(sorted(diff_prof))} pada profesi."
+                )
+            reason_points = [
+                f"Profil berkode {user_code}, sedangkan profesi ini berkode {profession_code}.",
+                (
+                    f"Huruf dominan sama ({user_dominant}), namun salah satu komponen minat "
+                    f"pendukung berbeda.{diff_str} Hal ini menunjukkan arah minat utama sejalan, "
+                    f"tetapi beberapa karakter tugas mungkin memerlukan adaptasi."
+                ),
+            ]
         elif rule_type == "adjacent_dominant":
-            return {
-                "meaning": "Cukup Cocok (Karakter Berdekatan)",
-                "reason_points": [
-                    "Terdapat relevansi yang cukup kuat antara kepribadian Anda dan tuntutan kerja",
-                    "Bukan kombinasi paling ideal secara teori"
-                ],
-                "implication": "Anda tetap dapat menemukan kepuasan melalui adaptasi terhadap fokus pekerjaan."
-            }
-        else:
-            return {
-                "meaning": "Berpotensi Cocok",
-                "reason_points": [
-                    "Ada titik temu antara minat Anda dan profesi ini",
-                    "Banyak ruang perbedaan yang perlu dijembatani"
-                ],
-                "implication": "Profil Anda mungkin membutuhkan proses belajar dan pembiasaan ekstra di lingkungan kerja ini."
-            }
-            
+            reason_points = [
+                f"Profil berkode {user_code}, sedangkan profesi ini berkode {profession_code}.",
+                (
+                    f"Huruf dominan berbeda ({user_dominant} pada profil, {prof_dominant} pada profesi) "
+                    f"namun keduanya bertetangga dalam model RIASEC. "
+                    f"Hal ini menunjukkan kedekatan minat meski orientasi aktivitas tidak sepenuhnya identik."
+                ),
+            ]
+        else:  # close_profile
+            reason_points = [
+                f"Profil berkode {user_code}, sedangkan profesi ini berkode {profession_code}.",
+                (
+                    f"Meski huruf dominan berbeda ({user_dominant} vs {prof_dominant}), "
+                    f"tidak ada pasangan minat yang berlawanan secara langsung dalam model RIASEC. "
+                    f"Hal ini menunjukkan profil yang masih cukup berdekatan secara keseluruhan."
+                ),
+            ]
+        meaning = (
+            "Kecocokan Sedang menunjukkan adanya keselarasan pada sebagian komponen minat, "
+            "namun terdapat perbedaan pada dominansi atau minat pendukung. "
+            "Profesi masih relevan, tetapi memerlukan penyesuaian."
+        )
+        implication   = "Profesi ini tetap dapat dipertimbangkan dengan strategi penguatan yang tepat."
+        next_steps    = [
+            "Identifikasi komponen minat yang berbeda.",
+            "Susun strategi adaptasi pada aspek tersebut.",
+            "Bandingkan dengan profesi lain yang lebih selaras.",
+        ]
+        cta_primary   = "Lihat Rekomendasi"
+        cta_secondary = "Strategi Adaptasi"
+
     else:  # LOW
-        return {
-            "meaning": "Kurang Cocok",
-            "reason_points": [
-                "Karakter alami dan minat Anda memiliki banyak perbedaan fundamental",
-                "Lingkungan kerjanya mungkin cepat membuat Anda bosan atau kehabisan energi"
-            ],
-            "implication": "Apabila Anda memilih untuk berkarier di sini, bersiaplah untuk beradaptasi terhadap tugas yang bisa jadi tidak selaras dengan zona nyaman Anda."
-        }
+        reason_points = [
+            f"Profil berkode {user_code}, sedangkan profesi ini berkode {profession_code}.",
+            (
+                f"Huruf dominan berbeda ({user_dominant} pada profil, {prof_dominant} pada profesi) "
+                f"dan tidak berada pada posisi bertetangga dalam model RIASEC, "
+                f"sehingga arah minat utamanya tidak sejalan."
+            ),
+        ]
+        meaning = (
+            "Kecocokan Rendah menunjukkan bahwa minat dominan profil karier berbeda "
+            "dan tidak berada pada spektrum yang berdekatan dengan karakter utama profesi. "
+            "Tingkat keselarasan relatif rendah."
+        )
+        implication = (
+            "Profesi ini tetap dapat dipilih, tetapi biasanya memerlukan adaptasi "
+            "yang lebih besar dan pertimbangan yang lebih matang."
+        )
+        next_steps    = [
+            "Tinjau kembali alasan memilih profesi ini.",
+            "Eksplorasi profesi lain yang lebih selaras dengan profil karier.",
+            "Jika tetap memilih profesi ini, siapkan strategi adaptasi yang lebih intens.",
+        ]
+        cta_primary   = "Cari Alternatif"
+        cta_secondary = "Tetap Lanjut"
+
+    return {
+        "meaning":       meaning,
+        "reason_points": reason_points,
+        "implication":   implication,
+        "next_steps":    next_steps,
+        "cta_primary":   cta_primary,
+        "cta_secondary": cta_secondary,
+        "match_label":   MATCH_LABELS[category],
+        "match_stars":   MATCH_STARS[category],
+    }

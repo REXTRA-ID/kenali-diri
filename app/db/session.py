@@ -1,21 +1,21 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-
 from app.core.config import settings
 from typing import Generator
-import os
 
 DATABASE_URL = settings.DATABASE_URL
 
-# Create engine
+# pool_recycle diambil dari settings (default 1800 = 30 menit)
+# Brief RIASEC halaman 102: pool_recycle=settings.DB_POOL_RECYCLE
+# Penting untuk DB remote: koneksi stale di-recycle sebelum timeout dari sisi server
 engine = create_engine(
     DATABASE_URL,
-    pool_pre_ping=True,  # Verify connections before using
-    pool_size=settings.SQLALCHEMY_POOL_SIZE,  # Connection pool size
-    max_overflow=settings.SQLALCHEMY_MAX_OVERFLOW,  # Max connections beyond pool_size
-    echo=False,  # Set to True to log SQL statements (dev only)
+    pool_pre_ping=True,                          # Verify connections before using
+    pool_size=settings.SQLALCHEMY_POOL_SIZE,
+    max_overflow=settings.SQLALCHEMY_MAX_OVERFLOW,
+    echo=False,                                  # Set to True untuk debug SQL (dev only)
     pool_timeout=30,
-    pool_recycle=3600
+    pool_recycle=settings.DB_POOL_RECYCLE        # 1800 detik = 30 menit
 )
 
 SessionLocal = sessionmaker(
@@ -28,19 +28,15 @@ SessionLocal = sessionmaker(
 
 def get_db() -> Generator[Session, None, None]:
     """
-    Dependency function for FastAPI endpoints
-    
-    Provides a database session and ensures it's properly closed
-    after the request is complete.
-    
-    Usage in FastAPI:
+    Dependency function untuk FastAPI endpoints.
+
+    Menyediakan database session dan memastikan session ditutup
+    setelah request selesai.
+
+    Usage:
         @app.get("/example")
         def example(db: Session = Depends(get_db)):
-            # Use db here
             pass
-    
-    Yields:
-        Session: SQLAlchemy database session
     """
     db = SessionLocal()
     try:
@@ -51,15 +47,12 @@ def get_db() -> Generator[Session, None, None]:
 
 def get_db_context():
     """
-    Context manager for database sessions
-    
-    Usage outside FastAPI (scripts, background tasks):
+    Context manager untuk database session di luar FastAPI
+    (scripts, background tasks).
+
+    Usage:
         with get_db_context() as db:
-            # Use db here
             pass
-    
-    Returns:
-        Session: SQLAlchemy database session
     """
     db = SessionLocal()
     try:

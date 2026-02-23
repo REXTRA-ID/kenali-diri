@@ -11,8 +11,10 @@ from app.db.models.kenalidiri_history import KenaliDiriHistory
 from app.api.v1.dependencies.token import check_and_deduct_token
 
 # ID kategori "Tes Profil Karier" di tabel kenalidiri_categories
-# category_code = CAREER_PROFILE, id = 1 (sesuai seed data)
-CAREER_PROFILE_CATEGORY_ID = 1
+# category_code = CAREER_PROFILE, id = 3 (sesuai seed data)
+# PERBAIKAN: nilai sebelumnya salah (1), seharusnya 3
+CAREER_PROFILE_CATEGORY_ID = 3
+
 
 class SessionService:
     def __init__(self, db: Session):
@@ -30,10 +32,10 @@ class SessionService:
         Setup lengkap sesi tes baru dalam satu transaksi:
         1. Potong token (hanya RECOMMENDATION)
         2. INSERT careerprofile_test_sessions
-        3. INSERT kenalidiri_history
+        3. INSERT kenalidiri_history (dengan category_id = 3)
         4. Generate & INSERT riasec_question_sets
         5. Return session_token + question_ids ke Flutter
-        
+
         Seluruh langkah di atas atomik — jika salah satu gagal,
         semua di-rollback termasuk potongan token.
         """
@@ -65,6 +67,7 @@ class SessionService:
             self.db.flush()  # Dapatkan ID tanpa commit dulu
 
             # === STEP 3: INSERT kenalidiri_history ===
+            # Menggunakan CAREER_PROFILE_CATEGORY_ID = 3 (bukan 1)
             history_entry = KenaliDiriHistory(
                 user_id=user.id,
                 test_category_id=CAREER_PROFILE_CATEGORY_ID,
@@ -111,23 +114,20 @@ class SessionService:
     def _generate_question_ids(self, session_token: str) -> list[int]:
         """
         Generate urutan 72 ID soal (12 soal per tipe RIASEC), diacak urutannya.
-        
+
         Seed dari session_token agar urutan tetap konsisten kalau user refresh.
         Dengan seed yang sama, urutan selalu identik.
-        
-        Struktur riasec_questions.json (72 soal total):
+
+        Struktur riasec_questions (72 soal total):
         - ID 1-12   → tipe R (Realistic)
         - ID 13-24  → tipe I (Investigative)
         - ID 25-36  → tipe A (Artistic)
         - ID 37-48  → tipe S (Social)
         - ID 49-60  → tipe E (Enterprising)
         - ID 61-72  → tipe C (Conventional)
-        
+
         Semua 72 soal diambil, lalu diacak urutannya (tidak dikelompokkan per tipe).
         Flutter yang handle pembagian per halaman dari 72 soal ini.
-        
-        Contoh output: [15, 23, 8, 45, 67, 2, 38, 51, 12, 60, 19, 44, ...]
-        Urutan inilah yang dikirim ke Flutter untuk ditampilkan ke user.
         """
         random.seed(session_token)
 
@@ -140,7 +140,7 @@ class SessionService:
             "C": list(range(61, 73)),
         }
 
-        # Ambil SEMUA 72 soal (12 per tipe), bukan sample
+        # Ambil SEMUA 72 soal (12 per tipe)
         all_questions = []
         for riasec_type, pool in type_ranges.items():
             all_questions.extend(pool)
