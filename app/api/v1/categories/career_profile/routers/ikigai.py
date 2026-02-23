@@ -22,7 +22,7 @@ router = APIRouter(
 
 
 @router.post("/start", response_model=IkigaiContentResponse)
-@limiter.limit("5/minute")
+@limiter.limit("10/hour")
 async def start_ikigai_session(
     request: Request,
     body: StartIkigaiRequest,
@@ -44,7 +44,7 @@ async def start_ikigai_session(
 
 
 @router.get("/content/{session_token}", response_model=IkigaiContentResponse)
-@limiter.limit("10/minute")
+@limiter.limit("30/minute")
 async def get_ikigai_content(
     request: Request,
     session_token: str,

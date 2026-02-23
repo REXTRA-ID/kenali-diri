@@ -26,10 +26,21 @@ Catatan kolom:
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.models.profession_main_category import ProfessionMainCategory
+    from app.models.profession_sub_category import ProfessionSubCategory
+    from app.models.profession_alias import ProfessionAlias
+    from app.models.profession_activity import ProfessionActivity
+    from app.models.profession_market_insight import ProfessionMarketInsight
+    from app.models.profession_career_path import ProfessionCareerPath
+    from app.models.profession_skill_rel import ProfessionSkillRel
+    from app.models.profession_tool_rel import ProfessionToolRel
+    from app.models.profession_study_program_rel import ProfessionStudyProgramRel
 from sqlalchemy import Integer, String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from app.database.config import Base
+from app.db.base import Base
 
 
 class Profession(Base):

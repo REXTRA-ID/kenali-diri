@@ -10,10 +10,15 @@ Aturan  : Hard delete. Tidak ada soft delete / is_active / display_order.
     Model ini HANYA merefleksikan tabel — tidak membuat atau mengubah tabel.
 """
 
+from typing import TYPE_CHECKING
 from datetime import datetime
+
+if TYPE_CHECKING:
+    from app.models.profession_sub_category import ProfessionSubCategory
+    from app.models.profession import Profession
 from sqlalchemy import Integer, String, Text, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from app.database.config import Base
+from app.db.base import Base
 
 
 class ProfessionMainCategory(Base):

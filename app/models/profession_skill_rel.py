@@ -3,10 +3,15 @@ app/models/profession_skill_rel.py
 ----------------------------------
 Entity: profession_skill_rels
 """
+from typing import TYPE_CHECKING
 from datetime import datetime
+
+if TYPE_CHECKING:
+    from app.models.profession import Profession
+    from app.models.skill import Skill
 from sqlalchemy import Integer, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from app.database.config import Base
+from app.db.base import Base
 
 class ProfessionSkillRel(Base):
     __tablename__ = "profession_skill_rels"

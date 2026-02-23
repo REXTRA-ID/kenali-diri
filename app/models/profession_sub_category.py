@@ -15,10 +15,15 @@ Constraint DB (sudah ada di tabel):
     Model ini HANYA merefleksikan tabel — tidak membuat atau mengubah tabel.
 """
 
+from typing import TYPE_CHECKING
 from datetime import datetime
+
+if TYPE_CHECKING:
+    from app.models.profession_main_category import ProfessionMainCategory
+    from app.models.profession import Profession
 from sqlalchemy import Integer, String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from app.database.config import Base
+from app.db.base import Base
 
 
 class ProfessionSubCategory(Base):

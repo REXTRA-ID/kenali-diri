@@ -6,7 +6,7 @@ Entity: tools
 from datetime import datetime
 from sqlalchemy import Integer, String, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
-from app.database.config import Base
+from app.db.base import Base
 
 class Tool(Base):
     __tablename__ = "tools"

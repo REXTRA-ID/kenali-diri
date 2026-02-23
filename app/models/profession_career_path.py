@@ -4,10 +4,13 @@ app/models/profession_career_path.py
 Entity: profession_career_paths
 """
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.models.profession import Profession
 from sqlalchemy import Integer, String, DateTime, ForeignKey, Float
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from app.database.config import Base
+from app.db.base import Base
 
 class ProfessionCareerPath(Base):
     __tablename__ = "profession_career_paths"
