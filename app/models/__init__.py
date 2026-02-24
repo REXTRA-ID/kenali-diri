@@ -19,6 +19,7 @@ from app.models.profession_tool_rel import ProfessionToolRel
 from app.models.profession_alias import ProfessionAlias
 from app.models.profession_market_insight import ProfessionMarketInsight
 from app.models.profession_study_program_rel import ProfessionStudyProgramRel
+from app.models.study_program import StudyProgram
 
 __all__ = [
     "ProfessionMainCategory",
@@ -33,4 +34,5 @@ __all__ = [
     "ProfessionAlias",
     "ProfessionMarketInsight",
     "ProfessionStudyProgramRel",
+    "StudyProgram",
 ]

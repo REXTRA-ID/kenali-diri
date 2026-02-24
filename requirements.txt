@@ -9,6 +9,7 @@ h11==0.16.0
 httptools==0.7.1
 httpx
 idna==3.11
+asyncpg
 psycopg2-binary
 prometheus-client
 pydantic==2.12.5
