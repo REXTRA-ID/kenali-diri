@@ -37,7 +37,7 @@ from app.api.v1.categories.career_profile.services.recommendation_narrative_serv
     RecommendationNarrativeService,
 )
 from app.api.v1.categories.career_profile.models.result import CareerRecommendation
-from app.api.v1.categories.career_profile.models.riasec import RIASECResult
+from app.api.v1.categories.career_profile.models.riasec import RIASECResult, RIASECCode
 
 # === PENTING: DigitalProfession DIHAPUS ===
 # Semua query profesi harus menggunakan model Profession dari tabel relasional
@@ -706,7 +706,12 @@ class IkigaiService:
                 .filter(RIASECResult.test_session_id == session.id)
                 .first()
             )
-            user_riasec_code = riasec_res.riasec_code if riasec_res else "Unknown"
+            
+            user_riasec_code = "Unknown"
+            if riasec_res:
+                user_code_obj = self.db.query(RIASECCode).filter(RIASECCode.id == riasec_res.riasec_code_id).first()
+                if user_code_obj:
+                    user_riasec_code = user_code_obj.riasec_code
 
             narrative_service = RecommendationNarrativeService()
             narrative_data = await narrative_service.generate_recommendations_narrative(
@@ -730,7 +735,8 @@ class IkigaiService:
                     "riasec_alignment": {
                         "user_code": user_riasec_code,
                         "profession_code": pc.get("riasec_code", "-"),
-                        "congruence_score": p.get("congruence_score", 0),
+                        "congruence_score": p.get("congruence_score", 0.0),
+                        "congruence_type": p.get("congruence_type", "Unknown"),
                     },
                     "score_breakdown": {
                         "total_score": round(p["total_score"], 2),

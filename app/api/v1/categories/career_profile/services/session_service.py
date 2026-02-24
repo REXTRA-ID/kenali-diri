@@ -13,7 +13,7 @@ from app.api.v1.dependencies.token import check_and_deduct_token
 # ID kategori "Tes Profil Karier" di tabel kenalidiri_categories
 # category_code = CAREER_PROFILE, id = 3 (sesuai seed data)
 # PERBAIKAN: nilai sebelumnya salah (1), seharusnya 3
-CAREER_PROFILE_CATEGORY_ID = 3
+CAREER_PROFILE_CATEGORY_ID = 1
 
 
 class SessionService:

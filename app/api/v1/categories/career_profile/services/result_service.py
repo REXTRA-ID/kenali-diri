@@ -77,7 +77,7 @@ class ResultService:
         candidate_ids = [c["profession_id"] for c in all_candidates]
         from app.api.v1.categories.career_profile.repositories.profession_repo import ProfessionRepository
         prof_repo = ProfessionRepository(self.db)
-        profession_names = {p.id: p.title for p in prof_repo.get_by_ids(candidate_ids)}
+        profession_names = {p.id: p.name for p in prof_repo.get_by_ids(candidate_ids)}
 
         MAX_DISPLAY_CANDIDATES = 30
         candidate_names = [
@@ -92,7 +92,7 @@ class ResultService:
             prof["profession_name"] = profession_names.get(prof["profession_id"], "Unknown")
             enriched_professions.append(prof)
 
-        user_first_name = user.full_name.split()[0] if user.full_name else "Pengguna"
+        user_first_name = user.fullname.split()[0] if user.fullname else "Pengguna"
         top_types = [RIASEC_LETTER_NAMES.get(l, l) for l in riasec_code_obj.riasec_code]
 
         return {
@@ -151,7 +151,7 @@ class ResultService:
 
         user_top_types = [RIASEC_LETTER_NAMES.get(l, l) for l in user_code_obj.riasec_code]
         prof_top_types = [RIASEC_LETTER_NAMES.get(l, l) for l in prof_code_obj.riasec_code]
-        user_first_name = user.full_name.split()[0] if user.full_name else "Pengguna"
+        user_first_name = user.fullname.split()[0] if user.fullname else "Pengguna"
 
         # Build explanation dengan signature baru (PERBAIKAN TEMUAN 2)
         fit_result_dict = {
@@ -183,7 +183,7 @@ class ResultService:
             },
             "target_profession": {
                 "profession_id": fit_result.profession_id,
-                "name":          profession.title if profession else "Unknown",
+                "name":          profession.name if profession else "Unknown",
                 "riasec_code":   prof_code_obj.riasec_code,
                 "riasec_title":  " – ".join(prof_top_types),
             },

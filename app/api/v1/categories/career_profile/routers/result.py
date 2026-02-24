@@ -52,7 +52,7 @@ async def get_fit_check_result(
     Get rule-based classification of Fit Check based on Holland Hexagon match.
     """
     service = ResultService(db)
-    return await service.get_fit_check_result(session_token, current_user)
+    return service.get_fit_check_result(session_token, current_user)
 
 
 @router.get(

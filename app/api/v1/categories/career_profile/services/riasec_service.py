@@ -750,6 +750,8 @@ class RIASECService:
         candidate_record = IkigaiCandidateProfession(
             test_session_id=session_id,
             candidates_data=candidates_data,
+            total_candidates=len(candidates),
+            generation_strategy=expansion_strategy,
         )
         self.db.add(candidate_record)
 
