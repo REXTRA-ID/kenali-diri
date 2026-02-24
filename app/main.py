@@ -77,12 +77,13 @@ REQUEST_COUNT = Counter("app_requests_total", "Total request count")
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle validation errors"""
     logger.error(f"Validation error: {exc.errors()}")
+    from fastapi.encoders import jsonable_encoder
     return JSONResponse(
         status_code=422,
-        content={
+        content=jsonable_encoder({
             "detail": "Validation error",
             "errors": exc.errors()
-        }
+        })
     )
 
 
