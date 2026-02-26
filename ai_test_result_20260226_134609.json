@@ -1,0 +1,678 @@
+{
+  "test_run_at": "2026-02-26 13:45:21",
+  "ai_persona": {
+    "name": "Andi - Software Engineer Idealis",
+    "dominan": "I",
+    "karakter": "Andi adalah seorang yang sangat analitis, senang memecahkan masalah kompleks, tertarik pada teknologi, sains, dan penelitian. Ia lebih suka bekerja mandiri dengan data dan logika daripada banyak berinteraksi sosial. Ia tidak tertarik dengan pekerjaan fisik atau aktivitas seni."
+  },
+  "riasec": {
+    "code": "?",
+    "scores": {
+      "R": 45,
+      "I": 56,
+      "A": 20,
+      "S": 22,
+      "E": 32,
+      "C": 46
+    },
+    "detail": {
+      "session_token": "58a4181f-02dc-40a0-8d57-95c64ebf2476",
+      "test_goal": "RECOMMENDATION",
+      "status": "riasec_completed",
+      "scores": {
+        "R": 45,
+        "I": 56,
+        "A": 20,
+        "S": 22,
+        "E": 32,
+        "C": 46
+      },
+      "classification_type": "single",
+      "is_inconsistent_profile": false,
+      "riasec_code_info": {
+        "riasec_code": "I",
+        "riasec_title": "Investigative",
+        "riasec_description": "Investigative types enjoy research, analysis, and understanding complex problems. They prefer intellectual challenges over routine tasks.",
+        "strengths": [
+          "Analytical thinking",
+          "Research skills",
+          "Problem solving",
+          "Critical thinking"
+        ],
+        "challenges": [
+          "Leadership roles",
+          "Persuasion",
+          "Repetitive tasks"
+        ],
+        "strategies": [
+          "Pursue continuous learning",
+          "Seek research opportunities",
+          "Ask deep questions"
+        ],
+        "work_environments": [
+          "Research labs",
+          "Universities",
+          "Think tanks",
+          "Tech companies"
+        ],
+        "interaction_styles": [
+          "Thoughtful",
+          "Reserved",
+          "Curious"
+        ]
+      },
+      "candidates": [
+        {
+          "profession_id": 6,
+          "riasec_code_id": 15,
+          "expansion_tier": 3,
+          "congruence_type": "subset_alternate",
+          "congruence_score": 0.65,
+          "display_order": 1,
+          "path": null
+        },
+        {
+          "profession_id": 7,
+          "riasec_code_id": 22,
+          "expansion_tier": 3,
+          "congruence_type": "subset_adjacent",
+          "congruence_score": 0.75,
+          "display_order": 2,
+          "path": null
+        },
+        {
+          "profession_id": 9,
+          "riasec_code_id": 22,
+          "expansion_tier": 3,
+          "congruence_type": "subset_adjacent",
+          "congruence_score": 0.75,
+          "display_order": 3,
+          "path": null
+        }
+      ],
+      "total_candidates": 3,
+      "display_candidates_count": 3,
+      "validity_warning": null,
+      "next_step": "ikigai"
+    },
+    "ai_answers": [
+      {
+        "question_id": 1,
+        "score": 4,
+        "question": "Saya senang merakit dan memperbaiki perangkat elektronik atau komponen teknologi",
+        "type": "Realistic"
+      },
+      {
+        "question_id": 2,
+        "score": 4,
+        "question": "Saya tertarik membangun dan mengatur infrastruktur jaringan komputer atau sistem penyimpanan data",
+        "type": "Realistic"
+      },
+      {
+        "question_id": 3,
+        "score": 3,
+        "question": "Saya suka memasang dan mengatur perangkat otomatis (sensor, IoT) untuk memantau kondisi sistem fisik atau lingkungan",
+        "type": "Realistic"
+      },
+      {
+        "question_id": 4,
+        "score": 5,
+        "question": "Saya merasa puas ketika berhasil menggunakan software teknis untuk desain atau simulasi sistem kompleks",
+        "type": "Realistic"
+      },
+      {
+        "question_id": 5,
+        "score": 2,
+        "question": "Saya senang mengatur dan menyiapkan peralatan recording, streaming, atau equipment untuk produksi konten digital",
+        "type": "Realistic"
+      },
+      {
+        "question_id": 6,
+        "score": 5,
+        "question": "Saya tertarik mengoptimalkan performa sistem digital, server, atau infrastruktur jaringan",
+        "type": "Realistic"
+      },
+      {
+        "question_id": 7,
+        "score": 4,
+        "question": "Saya yakin bisa mengoperasikan dan merawat perangkat elektronik presisi tinggi yang sensitif",
+        "type": "Realistic"
+      },
+      {
+        "question_id": 8,
+        "score": 3,
+        "question": "Saya yakin mampu mengatur sistem pelacakan dan monitoring untuk operasi logistik atau distribusi",
+        "type": "Realistic"
+      },
+      {
+        "question_id": 9,
+        "score": 3,
+        "question": "Saya percaya diri bisa mengatur infrastruktur teknologi atau sistem pembayaran digital",
+        "type": "Realistic"
+      },
+      {
+        "question_id": 10,
+        "score": 4,
+        "question": "Saya suka mengatur, merawat, dan memelihara server, sistem komputer, atau infrastruktur IT",
+        "type": "Realistic"
+      },
+      {
+        "question_id": 11,
+        "score": 5,
+        "question": "Saya tertarik mencoba dan mengeksplorasi teknologi otomasi seperti chatbot, AI assistant, atau sistem pintar",
+        "type": "Realistic"
+      },
+      {
+        "question_id": 12,
+        "score": 3,
+        "question": "Saya senang menggunakan sistem digital untuk mengelola dan mengorganisir berbagai keperluan",
+        "type": "Realistic"
+      },
+      {
+        "question_id": 13,
+        "score": 5,
+        "question": "Saya senang menganalisis data transaksi atau keuangan untuk menemukan pola, anomali, atau wawasan bisnis",
+        "type": "Investigative"
+      },
+      {
+        "question_id": 14,
+        "score": 5,
+        "question": "Saya tertarik meneliti dan menganalisis kumpulan data yang kompleks untuk menemukan pola atau insight penting",
+        "type": "Investigative"
+      },
+      {
+        "question_id": 15,
+        "score": 5,
+        "question": "Saya suka menggunakan analisis data untuk meningkatkan efisiensi dan produktivitas operasional suatu sistem",
+        "type": "Investigative"
+      },
+      {
+        "question_id": 16,
+        "score": 5,
+        "question": "Saya merasa tertantang untuk menganalisis kelemahan keamanan, celah sistem, atau ancaman digital",
+        "type": "Investigative"
+      },
+      {
+        "question_id": 17,
+        "score": 4,
+        "question": "Saya senang meneliti perilaku pengguna dan tren pasar untuk mendukung keputusan strategis",
+        "type": "Investigative"
+      },
+      {
+        "question_id": 18,
+        "score": 5,
+        "question": "Saya tertarik menganalisis data operasional untuk meningkatkan efisiensi proses dan pengambilan keputusan",
+        "type": "Investigative"
+      },
+      {
+        "question_id": 19,
+        "score": 4,
+        "question": "Saya yakin bisa menganalisis performa konten digital atau engagement untuk optimasi strategi",
+        "type": "Investigative"
+      },
+      {
+        "question_id": 20,
+        "score": 4,
+        "question": "Saya percaya diri dapat menganalisis data aset atau investasi untuk menghasilkan wawasan strategis",
+        "type": "Investigative"
+      },
+      {
+        "question_id": 21,
+        "score": 4,
+        "question": "Saya yakin mampu meneliti dan menganalisis data sumber daya untuk keberlanjutan dan efisiensi",
+        "type": "Investigative"
+      },
+      {
+        "question_id": 22,
+        "score": 5,
+        "question": "Saya suka menganalisis informasi secara mendalam untuk membuat kesimpulan atau keputusan yang tepat",
+        "type": "Investigative"
+      },
+      {
+        "question_id": 23,
+        "score": 5,
+        "question": "Saya tertarik melakukan riset mendalam tentang suatu topik atau masalah yang kompleks",
+        "type": "Investigative"
+      },
+      {
+        "question_id": 24,
+        "score": 5,
+        "question": "Saya senang menggunakan tools atau aplikasi untuk mengolah dan menganalisis data",
+        "type": "Investigative"
+      },
+      {
+        "question_id": 25,
+        "score": 2,
+        "question": "Saya senang mendesain tampilan antarmuka digital (UI/UX) yang menarik dan mudah digunakan",
+        "type": "Artistic"
+      },
+      {
+        "question_id": 26,
+        "score": 1,
+        "question": "Saya tertarik membuat konten kreatif visual untuk media sosial dan kampanye digital",
+        "type": "Artistic"
+      },
+      {
+        "question_id": 27,
+        "score": 1,
+        "question": "Saya suka mendesain identitas visual dan brand untuk perusahaan atau produk digital",
+        "type": "Artistic"
+      },
+      {
+        "question_id": 28,
+        "score": 2,
+        "question": "Saya merasa kreatif ketika membuat konten edukasi, infografis, atau materi visual pembelajaran",
+        "type": "Artistic"
+      },
+      {
+        "question_id": 29,
+        "score": 3,
+        "question": "Saya senang mendesain visualisasi data atau dashboard yang menarik dan mudah dipahami",
+        "type": "Artistic"
+      },
+      {
+        "question_id": 30,
+        "score": 1,
+        "question": "Saya tertarik membuat video, motion graphics, animasi, atau konten multimedia interaktif",
+        "type": "Artistic"
+      },
+      {
+        "question_id": 31,
+        "score": 1,
+        "question": "Saya yakin bisa mendesain materi presentasi visual atau konten marketing yang persuasif dan menarik",
+        "type": "Artistic"
+      },
+      {
+        "question_id": 32,
+        "score": 3,
+        "question": "Saya percaya diri dapat mendesain antarmuka aplikasi yang user-friendly untuk sistem yang kompleks",
+        "type": "Artistic"
+      },
+      {
+        "question_id": 33,
+        "score": 1,
+        "question": "Saya yakin mampu membuat kampanye kreatif atau visual storytelling yang engaging untuk berbagai produk",
+        "type": "Artistic"
+      },
+      {
+        "question_id": 34,
+        "score": 1,
+        "question": "Saya suka membuat dan mengeksplorasi berbagai bentuk konten visual seperti poster, infografis, atau video",
+        "type": "Artistic"
+      },
+      {
+        "question_id": 35,
+        "score": 2,
+        "question": "Saya tertarik menggunakan aplikasi atau tools desain untuk menciptakan karya visual yang kreatif",
+        "type": "Artistic"
+      },
+      {
+        "question_id": 36,
+        "score": 2,
+        "question": "Saya senang membuat presentasi visual atau laporan yang menarik dan mudah dipahami",
+        "type": "Artistic"
+      },
+      {
+        "question_id": 37,
+        "score": 1,
+        "question": "Saya senang membangun dan mengelola komunitas online atau grup diskusi digital",
+        "type": "Social"
+      },
+      {
+        "question_id": 38,
+        "score": 2,
+        "question": "Saya tertarik menjadi instruktur, mentor, atau fasilitator untuk mengajarkan keterampilan digital",
+        "type": "Social"
+      },
+      {
+        "question_id": 39,
+        "score": 3,
+        "question": "Saya suka melakukan riset pengguna, wawancara, atau user testing untuk memahami kebutuhan orang lain",
+        "type": "Social"
+      },
+      {
+        "question_id": 40,
+        "score": 2,
+        "question": "Saya merasa puas ketika bisa membantu orang lain menggunakan teknologi atau sistem digital dengan lebih baik",
+        "type": "Social"
+      },
+      {
+        "question_id": 41,
+        "score": 1,
+        "question": "Saya senang memfasilitasi pelatihan, workshop, atau sesi pembelajaran tentang adopsi teknologi",
+        "type": "Social"
+      },
+      {
+        "question_id": 42,
+        "score": 2,
+        "question": "Saya tertarik membantu usaha kecil atau komunitas menggunakan teknologi digital untuk berkembang",
+        "type": "Social"
+      },
+      {
+        "question_id": 43,
+        "score": 3,
+        "question": "Saya yakin bisa berkolaborasi dengan tim jarak jauh menggunakan tools kolaborasi digital dengan efektif",
+        "type": "Social"
+      },
+      {
+        "question_id": 44,
+        "score": 2,
+        "question": "Saya percaya diri dapat berkontribusi dalam proyek teknologi yang berdampak sosial atau kemanusiaan",
+        "type": "Social"
+      },
+      {
+        "question_id": 45,
+        "score": 2,
+        "question": "Saya yakin mampu memberikan dukungan dan bantuan teknis kepada pengguna melalui saluran digital",
+        "type": "Social"
+      },
+      {
+        "question_id": 46,
+        "score": 2,
+        "question": "Saya suka membantu orang lain menyelesaikan masalah teknologi atau mengajarkan cara menggunakan aplikasi baru",
+        "type": "Social"
+      },
+      {
+        "question_id": 47,
+        "score": 1,
+        "question": "Saya tertarik berpartisipasi atau mengorganisir acara online, webinar, atau diskusi virtual",
+        "type": "Social"
+      },
+      {
+        "question_id": 48,
+        "score": 1,
+        "question": "Saya senang berinteraksi dan membantu orang lain melalui berbagai platform digital",
+        "type": "Social"
+      },
+      {
+        "question_id": 49,
+        "score": 3,
+        "question": "Saya tertarik membangun startup teknologi atau bisnis digital dari nol",
+        "type": "Enterprising"
+      },
+      {
+        "question_id": 50,
+        "score": 1,
+        "question": "Saya senang memimpin kampanye digital marketing dan strategi pertumbuhan bisnis",
+        "type": "Enterprising"
+      },
+      {
+        "question_id": 51,
+        "score": 3,
+        "question": "Saya merasa termotivasi ketika memimpin proyek inovasi teknologi atau transformasi digital",
+        "type": "Enterprising"
+      },
+      {
+        "question_id": 52,
+        "score": 2,
+        "question": "Saya tertarik mengembangkan bisnis pembelajaran online atau platform edukasi digital",
+        "type": "Enterprising"
+      },
+      {
+        "question_id": 53,
+        "score": 3,
+        "question": "Saya suka memimpin inisiatif transformasi digital untuk meningkatkan efektivitas organisasi",
+        "type": "Enterprising"
+      },
+      {
+        "question_id": 54,
+        "score": 4,
+        "question": "Saya senang mengidentifikasi dan mengembangkan peluang bisnis dengan memanfaatkan teknologi modern",
+        "type": "Enterprising"
+      },
+      {
+        "question_id": 55,
+        "score": 1,
+        "question": "Saya yakin bisa memimpin tim penjualan atau pengembangan bisnis untuk produk teknologi",
+        "type": "Enterprising"
+      },
+      {
+        "question_id": 56,
+        "score": 3,
+        "question": "Saya percaya diri dapat mengembangkan strategi bisnis dan model inovasi untuk sektor digital",
+        "type": "Enterprising"
+      },
+      {
+        "question_id": 57,
+        "score": 3,
+        "question": "Saya yakin mampu memimpin tim untuk mengembangkan solusi digital yang scalable dan inovatif",
+        "type": "Enterprising"
+      },
+      {
+        "question_id": 58,
+        "score": 3,
+        "question": "Saya suka terlibat dalam kegiatan kewirausahaan, mengembangkan bisnis, atau proyek yang saya inisiasi sendiri",
+        "type": "Enterprising"
+      },
+      {
+        "question_id": 59,
+        "score": 2,
+        "question": "Saya tertarik memimpin tim, proyek, atau mengambil inisiatif kepemimpinan dalam berbagai konteks",
+        "type": "Enterprising"
+      },
+      {
+        "question_id": 60,
+        "score": 4,
+        "question": "Saya senang mencari dan menganalisis peluang bisnis, tren pasar, atau model bisnis baru",
+        "type": "Enterprising"
+      },
+      {
+        "question_id": 61,
+        "score": 4,
+        "question": "Saya senang membuat dokumentasi teknis, prosedur kerja, atau panduan sistem yang terstruktur",
+        "type": "Conventional"
+      },
+      {
+        "question_id": 62,
+        "score": 5,
+        "question": "Saya tertarik mengelola database dan memastikan akurasi serta integritas data",
+        "type": "Conventional"
+      },
+      {
+        "question_id": 63,
+        "score": 4,
+        "question": "Saya suka mengoptimalkan alur kerja dan proses bisnis menggunakan tools otomatisasi atau sistem",
+        "type": "Conventional"
+      },
+      {
+        "question_id": 64,
+        "score": 3,
+        "question": "Saya merasa penting untuk memastikan kepatuhan terhadap regulasi, standar, atau prosedur yang berlaku",
+        "type": "Conventional"
+      },
+      {
+        "question_id": 65,
+        "score": 3,
+        "question": "Saya senang mengelola inventori, tracking data, atau sistem pencatatan dengan rapi dan terorganisir",
+        "type": "Conventional"
+      },
+      {
+        "question_id": 66,
+        "score": 5,
+        "question": "Saya tertarik memastikan kualitas, testing, dan quality assurance untuk software atau sistem",
+        "type": "Conventional"
+      },
+      {
+        "question_id": 67,
+        "score": 3,
+        "question": "Saya yakin bisa mengelola aset digital, perpustakaan konten, atau sistem manajemen informasi dengan sistematis",
+        "type": "Conventional"
+      },
+      {
+        "question_id": 68,
+        "score": 4,
+        "question": "Saya percaya diri dapat membuat dan memelihara sistem checklist, tracking progress, atau monitoring yang detail",
+        "type": "Conventional"
+      },
+      {
+        "question_id": 69,
+        "score": 4,
+        "question": "Saya yakin mampu mengaudit, memeriksa, dan memastikan akurasi data atau dokumen dengan teliti",
+        "type": "Conventional"
+      },
+      {
+        "question_id": 70,
+        "score": 3,
+        "question": "Saya suka mengatur jadwal, timeline proyek, atau perencanaan sumber daya dengan sistematis",
+        "type": "Conventional"
+      },
+      {
+        "question_id": 71,
+        "score": 4,
+        "question": "Saya senang menggunakan spreadsheet, sistem database, atau tools untuk mengorganisir informasi",
+        "type": "Conventional"
+      },
+      {
+        "question_id": 72,
+        "score": 4,
+        "question": "Saya tertarik memastikan efisiensi operasional dan pengelolaan resource dengan cermat",
+        "type": "Conventional"
+      }
+    ]
+  },
+  "ikigai": {
+    "candidates": [],
+    "dimensions": {
+      "what_you_love": {
+        "label": "Apa yang kamu CINTAI (passion)",
+        "chosen": "Tidak dipilih",
+        "reasoning": "Saya tidak menemukan profesi yang sesuai dalam daftar ini. Sebagai individu yang analitis, saya lebih mencintai pekerjaan yang melibatkan pemecahan masalah kompleks, logika pemrograman, dan analisis data mendalam daripada aktivitas fisik atau interaksi sosial yang berlebihan."
+      },
+      "what_you_are_good_at": {
+        "label": "Apa yang kamu KUASAI (skill)",
+        "chosen": "Tidak dipilih",
+        "reasoning": "Daftar pilihan profesi tidak tersedia dalam input yang diberikan, namun sebagai Software Engineer, saya menguasai analisis data, logika pemrograman kompleks, dan pengembangan sistem teknis secara mandiri."
+      },
+      "what_the_world_needs": {
+        "label": "Apa yang DUNIA BUTUHKAN darimu",
+        "chosen": "Tidak dipilih",
+        "reasoning": "Tidak ada pilihan profesi yang tersedia dalam daftar untuk dianalisis. Sebagai seorang Software Engineer, saya memerlukan data spesifik mengenai kebutuhan dunia untuk menentukan mana yang paling sesuai dengan keahlian teknis dan logika saya."
+      },
+      "what_you_can_be_paid_for": {
+        "label": "Apa yang bisa MENGHASILKAN uang untukmu",
+        "chosen": "Tidak dipilih",
+        "reasoning": "Tidak ada pilihan profesi yang tersedia dalam daftar untuk dianalisis. Sebagai Software Engineer, saya memerlukan data spesifik mengenai peran yang ditawarkan agar dapat mengevaluasi potensi monetisasi berdasarkan keahlian teknis dan logika pemrograman saya."
+      }
+    },
+    "final_result": {
+      "session_token": "58a4181f-02dc-40a0-8d57-95c64ebf2476",
+      "user_first_name": "Andi",
+      "test_completed_at": "2026-02-26T06:45:58.702121+00:00",
+      "riasec_summary": {
+        "riasec_code": "I",
+        "riasec_title": "Investigative",
+        "top_types": [
+          "Investigative"
+        ],
+        "total_candidates_found": 3
+      },
+      "candidate_profession_names": [
+        {
+          "profession_id": 6,
+          "name": "Data Analyst"
+        },
+        {
+          "profession_id": 7,
+          "name": "Data Engineer"
+        },
+        {
+          "profession_id": 9,
+          "name": "AI Engineer"
+        }
+      ],
+      "ikigai_profile_summary": {
+        "what_you_love": "Kamu memiliki passion kuat pada mengeksplorasi minat dari aktivitas yang digemari secara bebas.",
+        "what_you_are_good_at": "Kamu menguasai berbagai keterampilan yang mendukung pencapaian pekerjaan berbasis analitis maupun praktis.",
+        "what_the_world_needs": "Sosok dengan impian mengubah lingkungan menjadi positif sangat dibutuhkan oleh berbagai komunitas global.",
+        "what_you_can_be_paid_for": "Dedikasimu dalam memberikan yang terbaik bisa diapresiasi dengan sangat bernilai dalam industri yang relevan."
+      },
+      "recommended_professions": [
+        {
+          "rank": 1,
+          "profession_id": 7,
+          "profession_name": "Data Engineer",
+          "match_percentage": 45.0,
+          "match_reasoning": "Profesi ini cocok karena melibatkan keahlian teknis yang sinkron dengan minat Anda. Anda akan menemukan pengalaman berkembang yang cepat di lingkungan kerja kolaboratif ini.",
+          "riasec_alignment": {
+            "user_code": "I",
+            "profession_code": "-",
+            "congruence_type": "Unknown",
+            "congruence_score": 0.75
+          },
+          "score_breakdown": {
+            "total_score": 45.0,
+            "intrinsic_score": 15.0,
+            "extrinsic_score": 30.0,
+            "score_what_you_love": 0.0,
+            "score_what_you_are_good_at": 15.0,
+            "score_what_the_world_needs": 15.0,
+            "score_what_you_can_be_paid_for": 15.0
+          }
+        },
+        {
+          "rank": 2,
+          "profession_id": 9,
+          "profession_name": "AI Engineer",
+          "match_percentage": 28.5,
+          "match_reasoning": "Profesi ini cocok karena melibatkan keahlian teknis yang sinkron dengan minat Anda. Anda akan menemukan pengalaman berkembang yang cepat di lingkungan kerja kolaboratif ini.",
+          "riasec_alignment": {
+            "user_code": "I",
+            "profession_code": "-",
+            "congruence_type": "Unknown",
+            "congruence_score": 0.75
+          },
+          "score_breakdown": {
+            "total_score": 28.5,
+            "intrinsic_score": 15.0,
+            "extrinsic_score": 13.5,
+            "score_what_you_love": 15.0,
+            "score_what_you_are_good_at": 0.0,
+            "score_what_the_world_needs": 6.0,
+            "score_what_you_can_be_paid_for": 7.5
+          }
+        }
+      ],
+      "points_awarded": null,
+      "TODO_points": "Implementasi poin Rextra belum aktif. Tambahkan setelah tabel points dikonfirmasi."
+    }
+  },
+  "personality": {
+    "session_token": "58a4181f-02dc-40a0-8d57-95c64ebf2476",
+    "riasec_code": "I",
+    "riasec_title": "Investigative",
+    "top_types": [
+      {
+        "letter": "I",
+        "name": "Investigative"
+      }
+    ],
+    "about_code": "Kode I menunjukkan bahwa kekuatan utamamu adalah tipe Investigative.\nCaramu bekerja sepenuhnya didominasi oleh orientasi Investigative.\nSinergi ini membuatmu cenderung menjadi pemecah masalah yang kritis, gemar menganalisis hal kompleks, dan selalu antusias menaklukkan tantangan intelektual demi menemukan jawaban yang akurat.",
+    "strengths": [
+      "Analytical thinking",
+      "Research skills",
+      "Problem solving",
+      "Critical thinking"
+    ],
+    "challenges": [
+      "Leadership roles",
+      "Persuasion",
+      "Repetitive tasks"
+    ],
+    "strategies": [
+      "Pursue continuous learning",
+      "Seek research opportunities",
+      "Ask deep questions"
+    ],
+    "interaction_styles": [
+      "Thoughtful",
+      "Reserved",
+      "Curious"
+    ],
+    "work_environments": [
+      "Research labs",
+      "Universities",
+      "Think tanks",
+      "Tech companies"
+    ]
+  }
+}
